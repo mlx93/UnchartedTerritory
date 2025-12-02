@@ -1,0 +1,13 @@
+# Ignore the cloned chartsmith repo (it has its own git)
+chartsmith/
+
+# Secrets
+OpenRouterKey
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+*.swp
+
