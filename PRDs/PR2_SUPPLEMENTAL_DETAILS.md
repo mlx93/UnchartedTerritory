@@ -4,6 +4,20 @@ This document contains component pseudocode and rendering logic extracted for re
 
 ---
 
+## Architecture Decision: RESOLVED
+
+**Decision**: Option A - Add HTTP Endpoint to Go Backend
+
+The Go backend will receive a new HTTP server for the validation endpoint:
+- New `pkg/api/validate.go` HTTP handler
+- HTTP server runs alongside PostgreSQL listener on port 8080
+- Tool execute() calls Go directly via HTTP POST
+- Environment variable: `GO_BACKEND_URL=http://localhost:8080`
+
+See: `PRDs/PR2_ARCHITECTURE_DECISION_REQUIRED.md` for full decision rationale.
+
+---
+
 ## ValidationResults Component
 
 **File**: `src/components/chat/ValidationResults.tsx`
@@ -188,52 +202,56 @@ COMPONENT Chat:
 
 ## validateChart Tool Definition
 
-**File**: `src/lib/tools/validateChart.ts`
+**File**: `src/lib/ai/tools/validateChart.ts`
+
+**Context**: This tool is added to the NEW `/api/chat/route.ts` created by PR1. It uses Vercel AI SDK format (NOT the Anthropic-native format used by existing Go tools).
 
 ```
 IMPORT { tool } from 'ai'
 IMPORT { z } from 'zod'
 
 EXPORT validateChart = tool({
-  description: "Validate a Helm chart for syntax errors, rendering issues, 
-                and Kubernetes best practices. Use when user asks to validate, 
+  description: "Validate a Helm chart for syntax errors, rendering issues,
+                and Kubernetes best practices. Use when user asks to validate,
                 check, lint, or verify their chart.",
-  
+
   inputSchema: z.object({
     chartPath: z.string().describe("Path to chart directory"),
     values: z.record(z.any()).optional().describe("Values overrides"),
     strictMode: z.boolean().optional().describe("Fail on warnings"),
     kubeVersion: z.string().optional().describe("Target K8s version")
   }),
-  
+
   execute: ASYNC (input) => {
-    response = await fetch(`${GO_BACKEND_URL}/api/validate`, {
+    response = await fetch(`${process.env.GO_BACKEND_URL}/api/validate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input)
     })
-    
+
     IF not response.ok:
       THROW new Error(`Validation failed: ${response.statusText}`)
-    
+
     RETURN response.json()
   }
 })
 ```
 
-**Register in streamText**:
+**Register in streamText** (in the NEW /api/chat/route.ts from PR1):
 ```
-// In /api/chat/route.ts
-import { validateChart } from '@/lib/tools/validateChart'
+// In /api/chat/route.ts (CREATED BY PR1)
+import { validateChart } from '@/lib/ai/tools/validateChart'
 
 const result = await streamText({
-  model: getModel(provider),
+  model: getModel(provider),  // Provider factory from PR1
   messages,
   tools: {
-    validateChart
+    validateChart  // NEW tool added by PR2
   }
 })
 ```
+
+**Note on Existing Tools**: The 3 existing tools (`text_editor`, `latest_subchart_version`, `latest_kubernetes_version`) remain in the Go backend using Anthropic-native format. They are NOT migrated to AI SDK format - they continue to work via the existing Go→Anthropic flow.
 
 ---
 

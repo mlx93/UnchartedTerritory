@@ -23,37 +23,88 @@ Replace Chartsmith's custom chat implementation with Vercel AI SDK, maintaining 
 
 ## System Architecture
 
-### Current Architecture
+### Current Architecture (Actual Chartsmith Codebase)
+
+**IMPORTANT**: The current Chartsmith architecture uses a **database-driven pattern**, NOT direct HTTP between frontend and backend. Understanding this is critical for PR1 implementation.
+
 ```
-┌─────────────────┐     Custom API      ┌─────────────────┐
-│   React Chat    │ ──────────────────► │  Next.js API    │
-│   Components    │                     │    Routes       │
-│                 │ ◄────────────────── │                 │
-│  Custom State   │   Custom Stream     │  @anthropic-ai  │
-└─────────────────┘                     └────────┬────────┘
-                                                 │
-                                                 ▼
-                                        ┌─────────────────┐
-                                        │   Anthropic     │
-                                        │      API        │
-                                        └─────────────────┘
+┌─────────────────┐                              ┌─────────────────┐
+│   React Chat    │      Server Actions          │  Next.js API    │
+│   Components    │ ────────────────────────────►│    Routes       │
+│                 │                              │                 │
+│  Jotai Atoms    │                              │  Workspace APIs │
+│  (Custom State) │                              └────────┬────────┘
+└────────┬────────┘                                       │
+         │                                                │ INSERT + pg_notify()
+         │ WebSocket                                      │
+         │ (Centrifugo)                                   ▼
+         │                                       ┌─────────────────┐
+         │◄──────────────────────────────────────│   PostgreSQL    │
+         │        Real-time updates              │   work_queue    │
+                                                 │   LISTEN/NOTIFY │
+                                                 └────────┬────────┘
+                                                          │ LISTEN
+                                                 ┌────────▼────────┐
+                                                 │   Go Backend    │
+                                                 │   (Workers)     │
+                                                 │                 │
+                                                 │  @anthropic-sdk │
+                                                 │  (All LLM calls)│
+                                                 └─────────────────┘
 ```
 
-### Target Architecture (PR1)
+**Key Current State Facts** (verified via codebase analysis):
+- **No `/api/chat` route exists** - messages go through `/api/workspace/[id]/message`
+- **Go backend has NO HTTP server** - all communication via PostgreSQL LISTEN/NOTIFY
+- **All LLM calls happen in Go backend** - frontend only does prompt classification (`lib/llm/prompt-type.ts`)
+- **State managed via Jotai atoms** - `atoms/workspace.ts` contains `messagesAtom`, `plansAtom`, etc.
+- **Streaming via Centrifugo WebSocket** - not standard HTTP/SSE
+- **3 existing tools in Go** - `text_editor`, `latest_subchart_version`, `latest_kubernetes_version` (Anthropic-native format)
+
+### Target Architecture (PR1) - NEW Parallel Chat System
+
+PR1 creates a **NEW parallel chat system** alongside the existing Go-based flow. This provides AI SDK benefits for new chat experiences without disrupting existing workspace functionality.
+
 ```
-┌─────────────────┐     useChat Hook    ┌─────────────────┐
-│   React Chat    │ ──────────────────► │  Next.js API    │
-│   Components    │                     │    Routes       │
-│                 │ ◄────────────────── │                 │
-│  @ai-sdk/react  │   Data Stream       │  AI SDK Core    │
-└─────────────────┘                     └────────┬────────┘
-                                                 │
-                                                 ▼
-                                        ┌─────────────────┐
-                                        │   OpenRouter    │
-                                        │  (Multi-Model)  │
-                                        └─────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           AFTER PR1                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────┐     useChat Hook    ┌─────────────────┐                │
+│  │   NEW Chat UI   │ ───────────────────►│  NEW /api/chat  │ ──► OpenRouter │
+│  │  (AI SDK-based) │ ◄───────────────────│   (streamText)  │                │
+│  │  @ai-sdk/react  │   Data Stream       │   AI SDK Core   │                │
+│  └─────────────────┘                     └─────────────────┘                │
+│                                                                              │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─                │
+│  EXISTING SYSTEM (UNCHANGED - Go backend continues to work)                 │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─                │
+│                                                                              │
+│  ┌─────────────────┐                     ┌─────────────────┐                │
+│  │ Existing Chat   │  Server Actions     │  Workspace APIs │                │
+│  │ (Jotai-based)   │ ───────────────────►│  /api/workspace │                │
+│  └────────┬────────┘                     └────────┬────────┘                │
+│           │ Centrifugo                            │ pg_notify               │
+│           │◄──────────────────────────────────────┤                         │
+│                                          ┌────────▼────────┐                │
+│                                          │   Go Backend    │                │
+│                                          │   (Unchanged)   │                │
+│                                          └─────────────────┘                │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**What PR1 Creates (NEW)**:
+- `/api/chat/route.ts` - New Next.js API route using `streamText`
+- `lib/ai/provider.ts` - Provider factory for OpenRouter
+- `components/chat/ProviderSelector.tsx` - Model selection UI
+- Chat components using `useChat` hook from `@ai-sdk/react`
+
+**What PR1 Preserves (EXISTING)**:
+- All Go backend functionality (unchanged)
+- Existing workspace APIs and Jotai state management
+- Centrifugo real-time updates
+- Existing tool implementations in Go
 
 ---
 
@@ -71,7 +122,7 @@ Replace Chartsmith's custom chat implementation with Vercel AI SDK, maintaining 
 ### Removed Dependencies
 | Package | Reason |
 |---------|--------|
-| `@anthropic-ai/sdk` | Replaced by AI SDK + OpenRouter |
+| `@anthropic-ai/sdk` | Replaced by AI SDK + OpenRouter. Frontend usage was orphaned code (never called). |
 
 ### Retained Dependencies
 - All existing Next.js dependencies
@@ -103,6 +154,20 @@ On application startup, validate:
 2. Log warning if `OPENAI_API_KEY` missing (fallback unavailable)
 3. Set defaults for optional config variables
 
+### Environment Variable Notes
+
+**Regarding `ANTHROPIC_API_KEY`**:
+- Currently in `.env` for both frontend and Go backend
+- Frontend usage (`lib/llm/prompt-type.ts`) is orphaned code being deleted in PR1
+- After PR1, frontend no longer needs `ANTHROPIC_API_KEY`
+- Go backend continues to use `ANTHROPIC_API_KEY` (unchanged)
+
+**New Variables (Frontend Only)**:
+- `OPENROUTER_API_KEY` - Required for new AI SDK chat
+- `OPENAI_API_KEY` - Optional fallback for direct OpenAI access
+- `DEFAULT_AI_PROVIDER` - Optional, defaults to "openai"
+- `DEFAULT_AI_MODEL` - Optional, defaults to "openai/gpt-4o"
+
 ---
 
 ## File Structure Changes
@@ -111,24 +176,24 @@ On application startup, validate:
 
 ```
 chartsmith-app/
-├── src/
-│   ├── lib/
-│   │   ├── ai/
-│   │   │   ├── provider.ts        # Provider factory
-│   │   │   ├── models.ts          # Model definitions
-│   │   │   └── config.ts          # AI configuration
+├── lib/
+│   ├── ai/
+│   │   ├── provider.ts        # Provider factory
+│   │   ├── models.ts          # Model definitions
+│   │   └── config.ts          # AI configuration
+│   └── ...
+├── components/
+│   ├── chat/
+│   │   ├── ProviderSelector.tsx  # New component
 │   │   └── ...
-│   ├── components/
-│   │   ├── chat/
-│   │   │   ├── ProviderSelector.tsx  # New component
-│   │   │   └── ...
-│   │   └── ...
-│   └── app/
-│       └── api/
-│           └── chat/
-│               └── route.ts       # New/Modified API route
-└── ...
+│   └── ...
+└── app/
+    └── api/
+        └── chat/
+            └── route.ts       # New API route
 ```
+
+**Note**: The chartsmith-app does NOT use a `src/` directory. All paths are relative to `chartsmith-app/`.
 
 ### Files to Modify
 
@@ -145,13 +210,21 @@ chartsmith-app/
 - Direct Anthropic SDK integration code
 - Custom message state management hooks
 
+### Files to Delete (Orphaned Code)
+
+| File | Reason |
+|------|--------|
+| `lib/llm/prompt-type.ts` | Orphaned - `promptType()` function not imported or used anywhere in codebase |
+
+**Note**: The `promptType()` function in this file was intended for prompt classification but is never called. The actual intent classification happens in the Go backend via the `new_intent` queue handler. This simplifies PR1 - we're deleting dead code, not migrating active functionality.
+
 ---
 
 ## Component Specifications
 
 ### Provider Factory Module
 
-**File**: `src/lib/ai/provider.ts`
+**File**: `lib/ai/provider.ts`
 
 **Purpose**: Abstract provider selection, return configured model instances
 
@@ -167,7 +240,7 @@ FUNCTION getModel(provider: string, modelId?: string):
   
   DEFINE model mappings:
     "openai" -> openrouter("openai/gpt-4o") OR custom modelId
-    "anthropic" -> openrouter("anthropic/claude-4.5-sonnet") OR custom modelId
+    "anthropic" -> openrouter("anthropic/claude-3.5-sonnet") OR custom modelId
   
   IF provider not in mappings:
     THROW InvalidProviderError
@@ -191,7 +264,7 @@ AVAILABLE_PROVIDERS: ProviderConfig[]
 
 ### Provider Selector Component
 
-**File**: `src/components/chat/ProviderSelector.tsx`
+**File**: `components/chat/ProviderSelector.tsx`
 
 **Purpose**: Allow user to select AI provider before conversation starts
 
@@ -294,7 +367,7 @@ COMPONENT Message(message):
 
 ### Chat Route Handler
 
-**File**: `src/app/api/chat/route.ts`
+**File**: `app/api/chat/route.ts`
 
 **Method**: POST
 
@@ -331,11 +404,37 @@ FUNCTION POST(request):
 - Provider error: 502 Bad Gateway
 - Network error: 503 Service Unavailable
 
-### Existing Tool Migration
+### Tool Strategy for PR1
 
-**Current tools must be converted to AI SDK format**
+**PR1 Scope**: The NEW `/api/chat` route will be **conversational only** (no tools).
 
-**Tool Definition Pattern**:
+**Rationale**:
+- Existing Go tools (`text_editor`, `latest_subchart_version`, `latest_kubernetes_version`) remain in Go backend
+- These tools require file system access and complex logic that should stay in Go
+- Full tool migration is handled in **PR1.5** (not PR1)
+
+**What This Means**:
+- Users can use the new AI SDK chat for conversational questions about Helm charts
+- File editing and chart operations continue to use the existing Go-based flow until PR1.5
+- This is acceptable because both systems coexist - users have full functionality via existing flow
+
+**NOTE**: Tool calling (US-4 in PR1_Product_PRD.md) is delivered in **PR1.5**, not PR1. The PR structure is:
+- **PR1**: AI SDK foundation (no tools)
+- **PR1.5**: Migration & Feature Parity (adds 6 tools: createChart, getChartContext, updateChart, textEditor, latestSubchartVersion, latestKubernetesVersion)
+- **PR2**: Validation Agent (adds validateChart tool)
+
+**PR1.5 Implementation** (see PR1.5_PLAN.md for details):
+Tool support will be added in PR1.5:
+1. PR1.5 adds Go HTTP server with tool endpoints
+2. All existing tools ported to AI SDK `tool()` format
+3. Tool execute() calls Go HTTP endpoint directly
+4. This establishes the pattern for PR2's validateChart tool
+
+**PR2 Implementation**:
+1. PR2 adds `/api/validate` endpoint to existing Go HTTP server
+2. validateChart tool uses the proven tool → Go HTTP pattern from PR1.5
+
+**Tool Definition Pattern** (for future reference):
 ```
 DEFINE tool using AI SDK tool() helper:
   description: string explaining tool purpose
@@ -343,20 +442,12 @@ DEFINE tool using AI SDK tool() helper:
   execute: async function implementing tool logic
 
 EXAMPLE structure:
-  chartGenerationTool:
-    description: "Generate Helm chart based on requirements"
+  latestKubernetesVersion:
+    description: "Return the latest version of Kubernetes"
     inputSchema: z.object({
-      chartName: z.string(),
-      requirements: z.string()
+      semver_field: z.enum(["major", "minor", "patch"])
     })
-    execute: async (params) => existing chart generation logic
-```
-
-**Tool Registration**:
-```
-DEFINE chartsmithTools object containing all tools
-
-PASS chartsmithTools to streamText() call in tools parameter
+    execute: async (params) => fetch from k8s API or static list
 ```
 
 ---
@@ -422,13 +513,33 @@ streamText configuration:
   model: provider model instance
   messages: converted messages
   system: system prompt
-  
-  // Tools if needed
-  tools: chartsmithTools
-  
+
+  // Tools deferred to future enhancement (see Tool Strategy section)
+
   // Return streaming response
   RETURN result.toDataStreamResponse()
 ```
+
+### Streaming System Coexistence
+
+PR1 introduces a **second streaming system** alongside the existing one:
+
+| System | Protocol | Used By |
+|--------|----------|---------|
+| **Existing** | Centrifugo WebSocket | Workspace operations, plan progress, file updates |
+| **NEW (PR1)** | AI SDK Data Stream (SSE) | New `/api/chat` responses |
+
+**Both systems run in parallel**. The existing Centrifugo system continues to handle:
+- `plan-updated` events
+- `chatmessage-updated` events (for existing Go-based flow)
+- `render-stream` events
+- `artifact-updated` events
+- `conversion-status` events
+
+The new AI SDK Data Stream handles:
+- Responses from the new `/api/chat` endpoint only
+
+**No conflicts**: The two systems operate on different data flows. Users interacting with existing workspace operations continue to receive updates via Centrifugo, while users of the new AI SDK chat receive responses via the Data Stream protocol.
 
 ---
 
@@ -476,6 +587,23 @@ TEST "POST /api/chat processes tools correctly"
 2. Tests mocking Anthropic SDK directly
 3. Tests asserting on old message format
 4. Tests checking custom streaming behavior
+
+### Existing Test Files to Review
+
+| File | Current Purpose | PR1 Impact |
+|------|-----------------|------------|
+| `atoms/__tests__/workspace.test.ts` | Render deduplication | May need message state tests for new flow |
+| `components/__tests__/FileTree.test.ts` | Patch statistics | No changes expected |
+| `hooks/__tests__/parseDiff.test.ts` | Diff parsing | No changes expected |
+
+### New Test Files to Create
+
+| File | Purpose |
+|------|---------|
+| `lib/ai/__tests__/provider.test.ts` | Provider factory unit tests |
+| `components/chat/__tests__/ProviderSelector.test.ts` | Component tests |
+| `app/api/chat/__tests__/route.test.ts` | API route integration tests |
+| `tests/provider-switching.spec.ts` | Playwright E2E test for provider selection |
 
 ---
 
@@ -686,9 +814,24 @@ openrouter("provider/model-name")
 
 Examples:
   openrouter("openai/gpt-4o")
-  openrouter("anthropic/claude-4.5-sonnet")
+  openrouter("anthropic/claude-3.5-sonnet")
   openrouter("google/gemini-pro")
 ```
+
+---
+
+## Related Documents
+
+| Document | Purpose |
+|----------|---------|
+| `PRDs/PR1_Product_PRD.md` | Functional requirements for this PR |
+| `docs/research/2025-12-01-OPTION-A-VS-PARALLEL-EVALUATION.md` | Architecture decision rationale |
+| `docs/research/2025-12-02-COMPREHENSIVE-PR1-RESEARCH.md` | Full codebase verification |
+| `docs/research/2025-12-02-PR1-GAPS-ANALYSIS.md` | PRD gaps analysis |
+| `docs/research/2025-12-01-PR1-ITERATION-CHECKLIST.md` | PRD iteration checklist |
+| `ClaudeResearch/CURRENT_STATE_ANALYSIS.md` | Current architecture details |
+| `ClaudeResearch/VERCEL_AI_SDK_REFERENCE.md` | SDK implementation patterns |
+| `Replicated_Chartsmith.md` | Source of truth requirements |
 
 ---
 

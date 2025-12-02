@@ -1,8 +1,53 @@
 # Vercel AI SDK Migration Reference
 
+> **Implementation Status**: This document is a **REFERENCE GUIDE** for the proposed PR1 migration.
+>
+> **Current State**: Chartsmith uses direct Anthropic SDK (`@anthropic-ai/sdk` in frontend, `anthropic-sdk-go` in Go backend) + Groq SDK
+>
+> **Vercel AI SDK**: NOT yet installed or implemented
+
+---
+
 ## Overview
 
 This document provides a reference for migrating Chartsmith from direct `@anthropic-ai/sdk` usage to the Vercel AI SDK. It covers the SDK architecture, key APIs, and migration patterns.
+
+---
+
+## ⚠️ Compatibility Notes (Updated After Codebase Analysis)
+
+### What This Reference Is For
+
+This reference documents the Vercel AI SDK patterns for the **NEW parallel chat system** that PR1 creates. It does NOT replace the existing Go-based flow.
+
+### Key Clarifications
+
+| Topic | Clarification |
+|-------|--------------|
+| **Frontend Anthropic SDK** | Only 1 file uses it (`lib/llm/prompt-type.ts`) - minimal migration |
+| **Go Backend** | Continues to use Anthropic SDK + Groq SDK directly - NOT migrated to AI SDK |
+| **Existing Go Tools** | 3 tools in Anthropic-native format: `text_editor_20241022`, `latest_subchart_version`, `latest_kubernetes_version` |
+| **NEW Tools (PR2)** | validateChart uses AI SDK `tool()` helper - added to NEW `/api/chat` route |
+
+### Two Tool Systems Coexist
+
+After PR1/PR2, Chartsmith will have two parallel tool systems:
+
+| System | Location | Format | Tools |
+|--------|----------|--------|-------|
+| **Existing** | Go backend (`pkg/llm/`) | Anthropic-native JSON schema | text_editor, latest_subchart_version, latest_kubernetes_version |
+| **NEW (PR1/PR2)** | Next.js (`/api/chat`) | Vercel AI SDK `tool()` | validateChart (and future tools) |
+
+### PR2 Architecture Decision
+
+The validateChart tool needs to call Go for helm/kube-score execution. However, Go has no HTTP server.
+
+See: `PRDs/PR2_ARCHITECTURE_DECISION_REQUIRED.md`
+
+Options:
+- **A**: Add HTTP endpoint to Go (new pattern, recommended)
+- **B**: Use PostgreSQL queue (async, consistent with existing)
+- **C**: Next.js spawns Go CLI (hybrid)
 
 ---
 

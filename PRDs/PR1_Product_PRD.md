@@ -26,13 +26,17 @@ This PR delivers the complete Vercel AI SDK migration including all Must Haves a
 
 ## Problem Statement
 
-### Current State
-Chartsmith uses custom implementations for chat functionality:
-- Custom chat UI components with manual message handling
-- Direct `@anthropic-ai/sdk` integration in frontend and backend
-- Custom streaming protocol implementation
-- Manual state management for chat interactions
-- Single provider lock-in (Anthropic only)
+### Current State (Actual Chartsmith Architecture)
+
+**IMPORTANT**: The current Chartsmith architecture differs significantly from a standard Next.js chat app:
+
+Chartsmith uses a **database-driven architecture** for chat functionality:
+- **Jotai atoms** for state management (`messagesAtom`, `plansAtom` in `atoms/workspace.ts`)
+- **Go backend handles ALL LLM calls** - frontend only does prompt classification
+- **PostgreSQL LISTEN/NOTIFY** for frontend↔backend communication (NOT HTTP)
+- **Centrifugo WebSocket** for real-time streaming (NOT standard SSE)
+- **3 existing tools in Go** - `text_editor`, `latest_subchart_version`, `latest_kubernetes_version`
+- **Single provider lock-in** - Anthropic only, hardcoded in Go backend
 
 ### Pain Points
 1. **High maintenance burden**: Custom streaming and state logic requires ongoing attention
@@ -40,11 +44,20 @@ Chartsmith uses custom implementations for chat functionality:
 3. **Inconsistent patterns**: Non-standard implementation creates onboarding friction
 4. **Limited optimization**: Missing streaming and state management optimizations
 
-### Desired State
-- Standardized chat implementation using Vercel AI SDK
-- Multi-provider support with easy switching
-- Optimized streaming with built-in performance features
-- Simplified state management via SDK hooks
+### Desired State (What PR1 Creates)
+
+PR1 creates a **NEW parallel chat system** that coexists with the existing Go-based flow:
+
+- **NEW `/api/chat` route** using Vercel AI SDK `streamText`
+- **NEW chat components** using `useChat` hook from `@ai-sdk/react`
+- **Multi-provider support** via OpenRouter (Claude, GPT-4, Gemini, etc.)
+- **Standard HTTP streaming** for the new chat flow
+- **Provider selection UI** for choosing models
+
+**What Remains Unchanged**:
+- Go backend and its LLM calls (existing tools continue to work)
+- Existing workspace APIs and Jotai state management
+- Centrifugo real-time updates for existing features
 
 ---
 
@@ -133,13 +146,24 @@ Chartsmith uses custom implementations for chat functionality:
 - Preserve context across messages in session
 - No persistence requirement (existing behavior)
 
+#### FR-1.4: New Chart Creation Mode
+
+When `workspace.currentRevisionNumber === 0` (new chart):
+- Render `NewChartContent` component instead of main chat interface
+- Hide role selector (use "auto" role by default)
+- Display "Create a new Helm chart" header with workspace name
+- Show "Create Chart" button when plan status is "review"
+- Use simplified submit handler without role selection
+
+**Existing Behavior**: This mode is already implemented in the current codebase (`ChatContainer.tsx:75-94`). The new AI SDK chat components should preserve this conditional rendering behavior when integrated.
+
 ### FR-2: Provider System
 
 #### FR-2.1: Available Providers
 | Provider | Model ID | Display Name |
 |----------|----------|--------------|
 | OpenAI | `openai/gpt-4o` | GPT-4o (Default) |
-| Anthropic | `anthropic/claude-4.5-sonnet` | Claude 4.5 Sonnet |
+| Anthropic | `anthropic/claude-3.5-sonnet` | Claude 3.5 Sonnet |
 
 #### FR-2.2: Provider Selector UI
 - Dropdown or radio button selector
@@ -245,7 +269,7 @@ Chartsmith uses custom implementations for chat functionality:
 ┌─────────────────────────────────────┐
 │  Model: [GPT-4o        ▼]           │
 │         ○ GPT-4o (Default)          │
-│         ○ Claude 4.5 Sonnet         │
+│         ○ Claude 3.5 Sonnet         │
 └─────────────────────────────────────┘
 ```
 
@@ -278,18 +302,35 @@ Chartsmith uses custom implementations for chat functionality:
 
 ## Data Flow
 
-### Message Flow (User → AI)
+### NEW Chat Flow (PR1 Creates This)
+
+This is the **NEW flow** that PR1 implements using Vercel AI SDK:
+
 1. User types message in input
 2. User clicks Send or presses Enter
 3. Frontend calls `sendMessage` from useChat hook
-4. Hook sends POST to `/api/chat` with messages + provider
+4. Hook sends POST to **NEW** `/api/chat` with messages + provider
 5. API route creates streamText request to OpenRouter
 6. OpenRouter forwards to selected model
-7. Streaming response flows back through chain
+7. Streaming response flows back via Data Stream protocol
 8. useChat hook updates messages state
 9. UI re-renders with new content
 
-### Provider Selection Flow
+### EXISTING Chat Flow (Unchanged)
+
+For reference, the existing Chartsmith flow (which continues to work):
+
+1. User types message in ChatContainer
+2. `createChatMessageAction` server action called
+3. Message inserted into `workspace_chat` table
+4. `pg_notify()` triggers Go worker
+5. Go worker processes via `pkg/listener/` handlers
+6. LLM calls made from Go using Anthropic SDK
+7. Results pushed via Centrifugo WebSocket
+8. Frontend receives via `useCentrifugo.ts`
+9. Jotai atoms updated, UI re-renders
+
+### Provider Selection Flow (NEW)
 1. User opens new conversation (empty state)
 2. Provider selector renders with default (GPT-4o)
 3. User optionally changes selection
@@ -314,7 +355,7 @@ Chartsmith uses custom implementations for chat functionality:
     { "role": "assistant", "content": "string" }
   ],
   "provider": "openai" | "anthropic",
-  "model": "openai/gpt-4o" | "anthropic/claude-4.5-sonnet"
+  "model": "openai/gpt-4o" | "anthropic/claude-3.5-sonnet"
 }
 ```
 
@@ -427,6 +468,21 @@ The following are explicitly NOT included in PR1:
 | OpenRouter | Meta-provider offering access to multiple LLM APIs |
 | Data Stream | Vercel AI SDK's streaming response format |
 | Tool Calling | LLM capability to invoke defined functions |
+
+---
+
+## Related Documents
+
+| Document | Purpose |
+|----------|---------|
+| `PRDs/PR1_Tech_PRD.md` | Technical specification for this PR |
+| `docs/research/2025-12-01-OPTION-A-VS-PARALLEL-EVALUATION.md` | Architecture decision rationale |
+| `docs/research/2025-12-02-COMPREHENSIVE-PR1-RESEARCH.md` | Full codebase verification |
+| `docs/research/2025-12-02-PR1-GAPS-ANALYSIS.md` | PRD gaps analysis |
+| `docs/research/2025-12-01-PR1-ITERATION-CHECKLIST.md` | PRD iteration checklist |
+| `ClaudeResearch/CURRENT_STATE_ANALYSIS.md` | Current architecture details |
+| `ClaudeResearch/VERCEL_AI_SDK_REFERENCE.md` | SDK implementation patterns |
+| `Replicated_Chartsmith.md` | Source of truth requirements |
 
 ---
 

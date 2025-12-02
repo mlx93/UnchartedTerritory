@@ -1,5 +1,13 @@
 # Helm Chart Validation Tools Reference
 
+> **Implementation Status**: This document describes **PROPOSED** validation tools for PR2.
+>
+> **Currently Exists**: Only `helm template` execution in `helm-utils/render-exec.go` (for workspace rendering, not validation)
+>
+> **Does NOT Exist Yet**: `helm lint` integration, `kube-score` integration, validation pipeline, `validateChart` AI tool
+
+---
+
 ## Overview
 
 This document outlines the validation tools that will be integrated into Chartsmith's Chart Validation Agent feature. These tools form the "intermediate" validation level specified in our requirements.

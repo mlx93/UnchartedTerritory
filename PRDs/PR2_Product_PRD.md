@@ -1,11 +1,25 @@
 # PRD3: Chartsmith Validation Agent & Live Provider Switching
 ## Functional Requirements Document
 
-**Version**: 1.0  
-**PR**: PR2 of 2  
-**Timeline**: Days 4-6 (3 days)  
-**Status**: Ready for Implementation  
+**Version**: 1.1
+**PR**: PR2 of 2
+**Timeline**: Days 4-6 (3 days)
+**Status**: Ready for Implementation
 **Prerequisite**: PR1 (AI SDK Migration) merged
+
+---
+
+## Architecture Decision: RESOLVED
+
+**Decision**: Option A - Add HTTP Endpoint to Go Backend
+
+The Go backend will receive a new HTTP server for the validation endpoint:
+- New `pkg/api/validate.go` HTTP handler
+- HTTP server runs alongside PostgreSQL listener on port 8080
+- Tool execute() calls Go directly via HTTP POST
+- Environment variable: `GO_BACKEND_URL=http://localhost:8080`
+
+See: `PRDs/PR2_ARCHITECTURE_DECISION_REQUIRED.md` for full decision rationale.
 
 ---
 
@@ -28,10 +42,23 @@ This PR delivers the Chart Validation Agent feature and completes the provider s
 ## Problem Statement
 
 ### Current State (After PR1)
-- Chartsmith helps create Helm charts via AI chat
-- Users must manually validate charts using CLI tools
+
+**PR1 creates** a NEW parallel chat system using Vercel AI SDK:
+- NEW `/api/chat` route using `streamText` with OpenRouter
+- NEW chat components using `useChat` hook
+- Provider selection at conversation start
+- Standard HTTP streaming for the new chat flow
+
+**Existing Go backend remains unchanged**:
+- All LLM calls for workspace operations still in Go
+- 3 existing tools: `text_editor`, `latest_subchart_version`, `latest_kubernetes_version`
+- Communication via PostgreSQL LISTEN/NOTIFY + Centrifugo
+- NO HTTP server in Go backend
+
+**Users still experience**:
+- Manual chart validation using CLI tools
 - Validation errors discovered late in deployment process
-- Provider selection locked at conversation start
+- Provider selection locked at conversation start (PR1)
 
 ### Pain Points
 1. **Manual validation burden**: Users run helm lint separately
@@ -211,12 +238,14 @@ When user asks to fix issues:
 
 ### FR-5: Validation Tool Integration
 
+**NOTE**: Tool implementation approach depends on architecture decision. See `PR2_ARCHITECTURE_DECISION_REQUIRED.md`.
+
 #### FR-5.1: Tool Definition
 AI SDK tool with:
 - Clear description for AI to understand when to use
 - Input schema for chart path and options
 - Output schema for structured results
-- Execute function calling Go backend
+- Execute function that calls Go backend via HTTP POST to /api/validate
 
 #### FR-5.2: Tool Invocation
 AI should invoke validation tool when:

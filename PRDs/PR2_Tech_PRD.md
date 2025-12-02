@@ -1,22 +1,37 @@
 # PRD4: Chartsmith Validation Agent & Live Provider Switching
 ## Technical Specification Document
 
-**Version**: 1.2  
-**PR**: PR2 of 2  
-**Timeline**: Days 4-6 (3 days)  
+**Version**: 1.3
+**PR**: PR2 of 2
+**Timeline**: Days 4-6 (3 days)
 **Prerequisite**: PR1 merged
+**Status**: Ready for Implementation
+
+---
+
+## Architecture Decision: RESOLVED
+
+**Decision**: Option A - Add HTTP Endpoint to Go Backend
+
+The Go backend will receive a new HTTP server for the validation endpoint:
+- New `pkg/api/validate.go` HTTP handler
+- HTTP server runs alongside PostgreSQL listener on port 8080
+- Tool execute() calls Go directly via HTTP POST
+- Environment variable: `GO_BACKEND_URL=http://localhost:8080`
+
+See: `PRDs/PR2_ARCHITECTURE_DECISION_REQUIRED.md` for full decision rationale.
 
 ---
 
 ## Technical Overview
 
 ### Objective
-Implement a Go-based validation pipeline exposed as an API endpoint, integrate with Vercel AI SDK tool calling, and enhance provider switching for live mid-conversation changes.
+Implement a Go-based validation pipeline, integrate with Vercel AI SDK tool calling (created in PR1), and enhance provider switching for live mid-conversation changes.
 
 ### Approach
 - New Go validation package orchestrating helm and kube-score
-- REST API endpoint for validation requests
-- AI SDK tool definition calling Go backend
+- Communication with Go backend (method depends on architecture decision)
+- AI SDK tool definition in the NEW `/api/chat` route created by PR1
 - Enhanced provider switcher component with state preservation
 
 ### Key Technical Decisions
@@ -24,31 +39,122 @@ Implement a Go-based validation pipeline exposed as an API endpoint, integrate w
 - Sequential pipeline (not parallel) for simpler error handling and debugging
 - kube-score failure is non-fatal to ensure partial results are always returned
 - Provider switching preserves full message history client-side (no server state)
+- **PENDING**: Communication pattern between frontend tool and Go validation
 
 ---
 
 ## System Architecture
 
+### State After PR1 (Context for PR2)
+
+PR1 creates a NEW parallel chat system. PR2 builds on this:
+
 ```
-┌─────────────────┐                    ┌─────────────────┐
-│   React Chat    │                    │  Next.js API    │
-│   + Tool UI     │ ◄──────────────────│   + Tools       │
-└────────┬────────┘                    └────────┬────────┘
-         │ Tool Call                            │ HTTP
-         │                             ┌────────▼────────┐
-         │                             │   Go Backend    │
-         │                             │  /api/validate  │
-         │                             └────────┬────────┘
-         │                             ┌────────▼────────┐
-         │                             │  Validation Pipeline
-         │                             │  lint → template → kube-score
-         └─────────────────────────────┴─────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        AFTER PR1 (Before PR2)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────┐     useChat Hook    ┌─────────────────┐                │
+│  │   NEW Chat UI   │ ───────────────────►│  NEW /api/chat  │ ──► OpenRouter │
+│  │  (AI SDK-based) │ ◄───────────────────│   (streamText)  │                │
+│  │  @ai-sdk/react  │   Data Stream       │   AI SDK Core   │                │
+│  └─────────────────┘                     └─────────────────┘                │
+│                                                                              │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─                │
+│  EXISTING GO BACKEND (PostgreSQL queue - NO HTTP SERVER)                    │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─                │
+│                                                                              │
+│  ┌─────────────────┐  pg_notify   ┌─────────────────┐                       │
+│  │ Workspace APIs  │ ────────────►│   Go Workers    │                       │
+│  └─────────────────┘              │   (Anthropic)   │                       │
+│                                   │   3 existing    │                       │
+│                                   │   tools         │                       │
+│                                   └─────────────────┘                       │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Flow
-1. User asks "validate my chart" in chat
+### PR2 Architecture Options
+
+**⚠️ Decision Required - See `PR2_ARCHITECTURE_DECISION_REQUIRED.md`**
+
+#### Option A: Add HTTP Endpoint to Go (Recommended)
+
+```
+┌─────────────────┐                    ┌─────────────────┐
+│   Chat UI       │     useChat        │  /api/chat      │
+│   (AI SDK)      │ ──────────────────►│  (streamText)   │
+└─────────────────┘                    └────────┬────────┘
+                                                │ Tool calls validateChart
+                                       ┌────────▼────────┐
+                                       │  validateChart  │
+                                       │  tool execute() │
+                                       └────────┬────────┘
+                                                │ HTTP POST
+                                       ┌────────▼────────┐
+                                       │  Go Backend     │
+                                       │  NEW /validate  │ ◄── NEW HTTP server
+                                       └────────┬────────┘
+                                       ┌────────▼────────┐
+                                       │  Validation     │
+                                       │  Pipeline       │
+                                       │  lint→template  │
+                                       │  →kube-score    │
+                                       └─────────────────┘
+```
+
+#### Option B: Use Existing Queue Pattern (Async)
+
+```
+┌─────────────────┐                    ┌─────────────────┐
+│   Chat UI       │     useChat        │  /api/chat      │
+│   (AI SDK)      │ ──────────────────►│  (streamText)   │
+└────────┬────────┘                    └────────┬────────┘
+         │                                      │ Tool calls validateChart
+         │ Centrifugo                  ┌────────▼────────┐
+         │ (async result)              │  validateChart  │
+         │                             │  tool execute() │
+         │                             └────────┬────────┘
+         │                                      │ pg_notify('validate_chart')
+         │                             ┌────────▼────────┐
+         │◄────────────────────────────│   PostgreSQL    │
+         │                             │   work_queue    │
+                                       └────────┬────────┘
+                                                │ LISTEN
+                                       ┌────────▼────────┐
+                                       │  Go Worker      │
+                                       │  (existing      │
+                                       │   pattern)      │
+                                       └─────────────────┘
+```
+
+#### Option C: Hybrid - Next.js Spawns Go CLI
+
+```
+┌─────────────────┐                    ┌─────────────────┐
+│   Chat UI       │     useChat        │  /api/chat      │
+│   (AI SDK)      │ ──────────────────►│  (streamText)   │
+└─────────────────┘                    └────────┬────────┘
+                                                │ Tool calls validateChart
+                                       ┌────────▼────────┐
+                                       │  validateChart  │
+                                       │  tool execute() │
+                                       └────────┬────────┘
+                                                │ exec.spawn()
+                                       ┌────────▼────────┐
+                                       │  Go Binary      │
+                                       │  `chartsmith    │
+                                       │   validate`     │
+                                       └────────┬────────┘
+                                                │ stdout JSON
+                                       ┌────────▼────────┐
+                                       │  Parse & Return │
+                                       └─────────────────┘
+```
+
+### Data Flow (Assuming Option A)
+1. User asks "validate my chart" in chat (using NEW AI SDK chat from PR1)
 2. AI SDK recognizes intent, invokes validateChart tool
-3. Tool execute() sends POST to Go backend /api/validate
+3. Tool execute() sends POST to Go backend NEW /validate endpoint
 4. Go backend runs helm lint → helm template → kube-score
 5. Results aggregated and returned as JSON
 6. Tool result rendered in chat via ValidationResults component
@@ -58,18 +164,72 @@ Implement a Go-based validation pipeline exposed as an API endpoint, integrate w
 
 ## Go Backend Specification
 
-### Package Structure
+### Existing Go Backend Context
 
+The current Go backend (`pkg/`) has these relevant patterns:
+
+**Existing Structure**:
 ```
 pkg/
-├── api/
+├── listener/           # PostgreSQL LISTEN/NOTIFY handlers
+│   ├── start.go       # Channel registration (8 channels)
+│   ├── listener.go    # Work queue processor
+│   └── *.go           # Individual handlers
+├── llm/               # LLM integration
+│   ├── client.go      # Anthropic SDK client factory
+│   ├── execute-action.go   # Tool execution loop
+│   ├── conversational.go   # Chat with 2 tools
+│   └── system.go      # System prompts
+├── realtime/          # Centrifugo integration
+│   └── centrifugo.go  # Event publishing
+└── workspace/         # Workspace management
+    └── types.go       # Workspace, Chart, File types
+```
+
+**Existing Tools** (in Go, Anthropic-native format):
+| Tool | Location | Purpose |
+|------|----------|---------|
+| `text_editor_20241022` | `pkg/llm/execute-action.go:510-531` | File view/edit/create |
+| `latest_subchart_version` | `pkg/llm/conversational.go:100-113` | ArtifactHub lookup |
+| `latest_kubernetes_version` | `pkg/llm/conversational.go:114-127` | K8s version info |
+
+### NEW Package Structure for PR2
+
+**Option A (HTTP Endpoint) - Recommended**:
+```
+pkg/
+├── api/                     # NEW - HTTP handlers
 │   └── validate.go          # HTTP handler for /api/validate
-├── validation/
+├── validation/              # NEW - Validation logic
 │   ├── pipeline.go          # RunValidation orchestration
 │   ├── helm.go              # runHelmLint, runHelmTemplate
 │   ├── kubescore.go         # runKubeScore
 │   ├── parser.go            # Output parsing utilities
 │   └── types.go             # All type definitions
+└── (existing packages unchanged)
+
+cmd/
+├── run.go                   # MODIFIED - Start HTTP server alongside listener
+└── (or new cmd/http.go)
+```
+
+**Option B (Queue Pattern)**:
+```
+pkg/
+├── listener/
+│   ├── start.go             # MODIFIED - Add validate_chart channel
+│   └── validate-chart.go    # NEW - Handler for validation
+├── validation/              # NEW - Same as Option A
+└── (existing packages unchanged)
+```
+
+**Option C (CLI Command)**:
+```
+cmd/
+├── validate.go              # NEW - CLI command for validation
+pkg/
+├── validation/              # NEW - Same as Option A
+└── (existing packages unchanged)
 ```
 
 ### Core Types
@@ -256,6 +416,14 @@ Execute and capture output. Parse JSON into []KubeScoreObject structure where ea
 
 ## Frontend Specification
 
+### Context: Building on PR1
+
+PR1 creates the NEW `/api/chat` route using Vercel AI SDK. PR2 adds tools to this route.
+
+The validateChart tool is defined using Vercel AI SDK's `tool()` helper and registered in the NEW `/api/chat/route.ts` created by PR1.
+
+**Important**: This is a NEW frontend tool in AI SDK format. It is separate from the existing Go backend tools (text_editor, etc.) which remain in Anthropic-native format.
+
 ### Validation Tool Definition
 
 **File**: `src/lib/ai/tools/validateChart.ts`
@@ -270,9 +438,44 @@ Execute and capture output. Parse JSON into []KubeScoreObject structure where ea
 - strictMode: z.boolean().optional().default(false).describe("Treat warnings as failures")
 - kubeVersion: z.string().optional().describe("Target Kubernetes version")
 
-**Execute Function**: Construct request body from input parameters. POST to GO_BACKEND_URL + "/api/validate" with JSON body. Handle non-ok responses by throwing error with message. Parse and return JSON response.
+**Execute Function** (depends on architecture decision):
 
-**Registration**: Export from tools/index.ts and include in chartsmithTools object passed to streamText().
+**Option A (HTTP Endpoint)**:
+```typescript
+execute: async (input) => {
+  const response = await fetch(`${process.env.GO_BACKEND_URL}/api/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`Validation failed: ${response.statusText}`);
+  return response.json();
+}
+```
+
+**Option B (Queue Pattern)** - More complex, requires polling:
+```typescript
+execute: async (input) => {
+  // Enqueue work
+  const jobId = await enqueueValidation(input);
+  // Poll for result (or use WebSocket)
+  return await pollForResult(jobId, { timeout: 30000 });
+}
+```
+
+**Option C (CLI Spawn)** - Via Next.js API wrapper:
+```typescript
+execute: async (input) => {
+  const response = await fetch('/api/validate', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+// Next.js /api/validate spawns Go CLI internally
+```
+
+**Registration**: Export from tools/index.ts and include in chartsmithTools object passed to streamText() in the NEW `/api/chat/route.ts`.
 
 ### ValidationResults Component
 

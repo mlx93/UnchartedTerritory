@@ -13,6 +13,52 @@ The combined work delivers a modernized, maintainable, and feature-rich AI-power
 
 ---
 
+## ⚠️ Critical Architecture Notes (Updated After Codebase Analysis)
+
+### Actual Current Architecture
+
+After thorough codebase analysis, the Chartsmith architecture differs from initial assumptions:
+
+| Initial Assumption | Actual Reality |
+|-------------------|----------------|
+| Next.js calls LLM directly | **Go backend handles ALL LLM calls** |
+| HTTP REST between frontend/backend | **PostgreSQL LISTEN/NOTIFY + Centrifugo** |
+| Standard streaming (SSE) | **Centrifugo WebSocket pub/sub** |
+| `/api/chat` route exists | **No such route** - workspace-specific routes only |
+| Go backend has HTTP server | **No HTTP server** - purely worker-based |
+| Single LLM provider | **Dual provider: Anthropic Claude + Groq Llama** |
+
+### Current LLM Providers
+
+| Provider | SDK | Models | Usage |
+|----------|-----|--------|-------|
+| **Anthropic** | `anthropic-sdk-go v0.2.0-alpha.11` | `claude-3-7-sonnet-20250219`, `claude-3-5-sonnet-20241022` | Planning, execution, chat, tools |
+| **Groq** | `jpoz/groq` | `llama-3.3-70b-versatile` | Intent detection, feedback, file conversion |
+| **Voyage** | Custom HTTP | Voyage embeddings | Vector search for recommendations |
+
+### PR1 Creates Parallel System
+
+PR1 does NOT replace the existing architecture. It creates a **NEW parallel chat system**:
+
+```
+EXISTING (Unchanged):  Frontend → Workspace API → PostgreSQL → Go Worker → Anthropic
+NEW (PR1 Creates):     Frontend → NEW /api/chat → OpenRouter (via AI SDK)
+```
+
+### PR2 Architecture Decision Required
+
+PR2's `validateChart` tool needs to call Go backend for helm/kube-score execution. But Go has no HTTP server.
+
+**Decision required before PR2 implementation - see `PRDs/PR2_ARCHITECTURE_DECISION_REQUIRED.md`**:
+
+| Option | Approach | Sync? | New Pattern? |
+|--------|----------|-------|--------------|
+| **A** | Add HTTP endpoint to Go | Yes | Yes (recommended) |
+| **B** | Use PostgreSQL queue | No | No (consistent) |
+| **C** | Next.js spawns Go CLI | Yes | Partial |
+
+---
+
 ## Goals & Constraints
 
 ### Primary Goals
@@ -37,12 +83,17 @@ The combined work delivers a modernized, maintainable, and feature-rich AI-power
 ┌─────────────────────────────────────────────────────────────────┐
 │                      CURRENT ARCHITECTURE                        │
 ├─────────────────────────────────────────────────────────────────┤
-│  Frontend          │  Custom chat UI, @anthropic-ai/sdk        │
-│  API Layer         │  Custom streaming, manual state mgmt       │
-│  Backend (Go)      │  Chart processing, some LLM calls          │
-│  Provider          │  Anthropic only                            │
+│  Frontend          │  Custom chat UI, Jotai state, minimal SDK  │
+│  API Layer         │  PostgreSQL queue + Centrifugo WebSocket   │
+│  Backend (Go)      │  ALL LLM calls, tools, chart processing    │
+│  Providers         │  Anthropic Claude + Groq Llama             │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Existing Go Tools** (3 total):
+- `text_editor_20241022` - File view/create/str_replace operations
+- `latest_subchart_version` - ArtifactHub subchart lookup
+- `latest_kubernetes_version` - K8s version info
 
 ### Target State (After PR2)
 ```
@@ -148,22 +199,41 @@ const model = openrouter('anthropic/claude-3.5-sonnet');
 
 **Context**: Chart validation requires running CLI tools (helm lint, helm template, kube-score). Frontend cannot execute these.
 
-**Decision**: Implement validation pipeline in Go backend, expose via API, call from frontend via Vercel AI SDK tools.
+**Decision**: Implement validation pipeline in Go backend, call from frontend via Vercel AI SDK tools.
 
-**Rationale**:
+**⚠️ UPDATE: Communication pattern requires decision** - see `PRDs/PR2_ARCHITECTURE_DECISION_REQUIRED.md`
+
+The Go backend currently has NO HTTP server. Three options exist:
+
+**Option A (Recommended)**: Add HTTP endpoint to Go
+```
+AI SDK Tool → fetch() → NEW Go HTTP /validate → helm/kube-score
+```
+
+**Option B**: Use existing PostgreSQL queue pattern
+```
+AI SDK Tool → pg_notify('validate_chart') → Go Worker → Centrifugo → Frontend
+```
+
+**Option C**: Next.js spawns Go CLI
+```
+AI SDK Tool → Next.js /api/validate → exec(Go binary) → stdout JSON
+```
+
+**Rationale for validation in Go**:
 - Go is well-suited for CLI orchestration
 - Aligns with assignment goal (learn Go)
 - Keeps sensitive operations server-side
 - Natural fit for existing Go codebase
 - Tool calling pattern enables AI interpretation
 
-**Architecture**:
+**Architecture (Option A)**:
 ```
 ┌─────────────┐     Tool Call     ┌──────────────┐
 │  AI (Chat)  │ ─────────────────▶│  Go Backend  │
-│             │                   │              │
-│  "Validate  │   POST /validate  │  helm lint   │
-│   my chart" │ ◀─────────────────│  helm template│
+│             │                   │  NEW HTTP    │
+│  "Validate  │   POST /validate  │  endpoint    │
+│   my chart" │ ◀─────────────────│  helm lint   │
 │             │   JSON Results    │  kube-score  │
 └─────────────┘                   └──────────────┘
 ```
