@@ -1,10 +1,10 @@
 # PRD4: Chartsmith Validation Agent & Live Provider Switching
 ## Technical Specification Document
 
-**Version**: 1.3
+**Version**: 1.4
 **PR**: PR2 of 2
 **Timeline**: Days 4-6 (3 days)
-**Prerequisite**: PR1 merged
+**Prerequisite**: PR1.5 merged
 **Status**: Ready for Implementation
 
 ---
@@ -45,31 +45,33 @@ Implement a Go-based validation pipeline, integrate with Vercel AI SDK tool call
 
 ## System Architecture
 
-### State After PR1 (Context for PR2)
+### State After PR1.5 (Context for PR2)
 
-PR1 creates a NEW parallel chat system. PR2 builds on this:
+PR1 created the AI SDK foundation, and PR1.5 added tool support with a Go HTTP server. PR2 builds on this:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        AFTER PR1 (Before PR2)                                │
+│                        AFTER PR1.5 (Before PR2)                              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌─────────────────┐     useChat Hook    ┌─────────────────┐                │
 │  │   NEW Chat UI   │ ───────────────────►│  NEW /api/chat  │ ──► OpenRouter │
 │  │  (AI SDK-based) │ ◄───────────────────│   (streamText)  │                │
-│  │  @ai-sdk/react  │   Data Stream       │   AI SDK Core   │                │
-│  └─────────────────┘                     └─────────────────┘                │
+│  │  @ai-sdk/react  │   Data Stream       │   + 4 AI SDK    │                │
+│  └─────────────────┘                     │     tools       │                │
+│                                          └────────┬────────┘                │
+│                                                   │ HTTP (tool calls)       │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─│─ ─ ─ ─ ─ ─ ─ ─ ─       │
+│  GO BACKEND (HTTP SERVER on :8080 + PostgreSQL queue)                       │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─       │
+│                                                   │                         │
+│  ┌─────────────────┐              ┌───────────────▼───────────┐             │
+│  │ Workspace APIs  │  pg_notify   │  Go HTTP Server (:8080)   │             │
+│  │ (homepage flow) │ ────────────►│  /api/tools/editor        │             │
+│  └─────────────────┘              │  /api/tools/versions/*    │             │
+│                                   └───────────────────────────┘             │
 │                                                                              │
-│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─                │
-│  EXISTING GO BACKEND (PostgreSQL queue - NO HTTP SERVER)                    │
-│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─                │
-│                                                                              │
-│  ┌─────────────────┐  pg_notify   ┌─────────────────┐                       │
-│  │ Workspace APIs  │ ────────────►│   Go Workers    │                       │
-│  └─────────────────┘              │   (Anthropic)   │                       │
-│                                   │   3 existing    │                       │
-│                                   │   tools         │                       │
-│                                   └─────────────────┘                       │
+│  Legacy Go Workers (pkg/llm/*) - deprecated, not user-facing                │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 

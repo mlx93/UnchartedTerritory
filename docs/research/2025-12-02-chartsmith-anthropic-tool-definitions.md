@@ -5,10 +5,11 @@ git_commit: e615830f7b0b60ecb817d762b9b4e4186f855d85
 branch: main
 repository: UnchartedTerritory
 topic: "Go Tool Calls in Anthropic SDK Format - Chartsmith Codebase"
-tags: [research, codebase, anthropic-sdk, tools, chartsmith, go]
+tags: [research, codebase, anthropic-sdk, tools, chartsmith, go, workflow, custom-tags]
 status: complete
 last_updated: 2025-12-02
 last_updated_by: Claude Code
+last_updated_note: "Added follow-up research explaining how Chartsmith functions without explicit createChart/getChartContext/updateChart tools"
 ---
 
 # Research: Go Tool Calls in Anthropic SDK Format - Chartsmith Codebase
@@ -268,3 +269,177 @@ stream := client.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
 1. Why is `recommended_dependency` commented out? Was this functionality deprecated or moved elsewhere?
 2. The `latest_kubernetes_version` tool has a schema mismatch (`semver_field` vs `semver_description` in required array) - is this intentional?
 3. The `text_editor_20250124` constant exists but isn't used - is there a plan to migrate to this newer version?
+
+---
+
+## Follow-up Research: 2025-12-02T17:15:00-0600
+
+### Research Question
+
+If these are the only tools that exist, how does Chartsmith function for core operations like createChart, getChartContext, and updateChart?
+
+### Key Finding: Chartsmith Does NOT Use Tools for Core Chart Operations
+
+**Chartsmith uses a fundamentally different architecture** than explicit tool calling for its core chart manipulation operations. Instead of defining `createChart`, `getChartContext`, `updateChart` as Anthropic tools, it uses:
+
+1. **Custom XML-like tags** parsed from raw LLM text responses
+2. **System prompts** that instruct LLMs to return structured output in these tags
+3. **Queue-based workflow orchestration** via PostgreSQL LISTEN/NOTIFY
+4. **Vector embeddings** for context/file selection
+5. **The `text_editor` tool only for final file editing** (view/str_replace/create commands)
+
+---
+
+### How Chart Creation Works
+
+**Location**: `chartsmith/pkg/listener/new-conversion.go` → `chartsmith/pkg/llm/convert-file.go`
+
+**Process**:
+1. User uploads Kubernetes manifests
+2. Files are sorted by GVK priority (ConfigMap=0, Secret=1, Deployment=8, etc.)
+3. Each file is converted one-by-one via LLM (Groq Llama 3.3 70B or Claude)
+4. LLM returns `<chartsmithArtifact path="...">content</chartsmithArtifact>` tags
+5. Parser extracts file paths and content from tags (`chartsmith/pkg/llm/parser.go:31-89`)
+6. For `values.yaml`, unified diff patches are applied to merge values incrementally
+7. All files stored in database, chart record created
+
+**No tool call involved** - Pure text generation with custom tag parsing.
+
+---
+
+### How Context Retrieval Works
+
+**Location**: `chartsmith/pkg/workspace/context.go:28-175`
+
+**Function**: `ChooseRelevantFilesForChatMessage()`
+
+**Process**:
+1. User prompt is **expanded** by Claude to include semantic search terms (`chartsmith/pkg/llm/expand.go:10-54`)
+2. Embeddings generated via **Voyage AI** (`chartsmith/pkg/embedding/embeddings.go:35-116`)
+3. **Vector similarity search** using pgvector: `1 - (embeddings <=> $1)` (cosine distance)
+4. `Chart.yaml` and `values.yaml` always included with score 1.0
+5. Non-YAML files penalized by -0.25 similarity
+6. Top 10 files with similarity >= 0.8 selected
+7. File contents included in LLM prompt context
+
+**No tool call involved** - Database queries and vector search, then files embedded in system prompts.
+
+---
+
+### How Chart Updates Work
+
+**Location**: `chartsmith/pkg/llm/execute-action.go:437-676`
+
+**Process**:
+1. User approves a plan (text description of changes)
+2. **Execution plan created** - LLM returns `<chartsmithActionPlan>` tags listing file actions
+3. Action files stored in database (path + action: "create" or "update")
+4. **For each file**, `ExecuteAction()` is called with the `text_editor_20241022` tool
+5. Claude uses tool iteratively:
+   - `view` to see current content
+   - `str_replace` to make changes (with fuzzy matching fallback)
+   - `create` to make new files
+6. Content streamed to UI via realtime events
+
+**This is the ONLY place tools are used** - and only for the actual file editing step, not for planning or context.
+
+---
+
+### Architecture Summary
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                        CHARTSMITH WORKFLOW                            │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  1. PLAN CREATION (No Tools)                                          │
+│     ├─ User sends chat message                                        │
+│     ├─ Context selected via vector similarity search                  │
+│     ├─ LLM streams plain text plan description                        │
+│     └─ Plan stored in database                                        │
+│                                                                       │
+│  2. EXECUTION PLAN (Custom Tags, No Tools)                            │
+│     ├─ User approves plan                                             │
+│     ├─ LLM returns <chartsmithActionPlan> tags                        │
+│     ├─ Parser.ParsePlan() extracts action items                       │
+│     └─ Action files stored in database                                │
+│                                                                       │
+│  3. ACTION EXECUTION (text_editor Tool)                               │
+│     ├─ For each action file                                           │
+│     ├─ Claude uses text_editor_20241022 tool                          │
+│     │   ├─ view: read current content                                 │
+│     │   ├─ str_replace: modify content                                │
+│     │   └─ create: create new file                                    │
+│     └─ Changes saved to database                                      │
+│                                                                       │
+│  4. CONVERSION (Custom Tags, No Tools)                                │
+│     ├─ K8s manifests uploaded                                         │
+│     ├─ LLM returns <chartsmithArtifact> tags                          │
+│     ├─ Parser.ParseArtifacts() extracts file contents                 │
+│     ├─ Unified diffs applied for values.yaml                          │
+│     └─ Chart files stored in database                                 │
+│                                                                       │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Custom Tag Formats Used
+
+| Tag | Purpose | Location |
+|-----|---------|----------|
+| `<chartsmithArtifact path="...">content</chartsmithArtifact>` | File content output | `parser.go:35` |
+| `<chartsmithArtifactPlan title="...">` | Plan container | `parser.go:96` |
+| `<chartsmithActionPlan type="file" action="create/update" path="...">` | Action items | `parser.go:103` |
+
+**Parsing regex patterns**:
+- Artifacts: `(?s)<chartsmithArtifact([^>]*)>(.*?)</chartsmithArtifact>`
+- Actions: `<chartsmithActionPlan\s+type="([^"]+)"\s+action="([^"]+)"\s+path="([^"]+)"`
+
+---
+
+### LLM Models by Operation
+
+| Operation | Model | Provider | Tools Used |
+|-----------|-------|----------|------------|
+| Intent classification | llama-3.3-70b-versatile | Groq | None (JSON response format) |
+| Prompt expansion | claude-3-7-sonnet-20250219 | Anthropic | None |
+| Plan creation | claude-3-7-sonnet-20250219 | Anthropic | None |
+| Execution plan | claude-3-7-sonnet-20250219 | Anthropic | None |
+| File conversion | llama-3.3-70b-versatile | Groq | None |
+| Action execution | claude-3-5-sonnet-20241022 | Anthropic | `text_editor_20241022` |
+| Conversational chat | claude-3-7-sonnet-20250219 | Anthropic | `latest_subchart_version`, `latest_kubernetes_version` |
+
+---
+
+### Key Code References
+
+| Operation | File | Lines | Description |
+|-----------|------|-------|-------------|
+| Chart creation entry | `listener/new-conversion.go` | 23-130 | Conversion workflow start |
+| File conversion | `llm/convert-file.go` | 24-121 | LLM call for K8s→Helm |
+| Artifact parsing | `llm/parser.go` | 31-89 | Extract `<chartsmithArtifact>` tags |
+| Action parsing | `llm/parser.go` | 91-135 | Extract `<chartsmithActionPlan>` tags |
+| Context selection | `workspace/context.go` | 28-175 | Vector similarity file selection |
+| Prompt expansion | `llm/expand.go` | 10-54 | Semantic search term generation |
+| Plan creation | `llm/plan.go` | 21-116 | Plain text plan streaming |
+| Execution plan | `llm/execute-plan.go` | 14-105 | Action plan generation |
+| Action execution | `llm/execute-action.go` | 437-676 | text_editor tool loop |
+| File updates | `workspace/file.go` | 107-165 | Database persistence |
+
+---
+
+### Why No Explicit Chart Tools?
+
+The architecture reflects these design decisions:
+
+1. **Separation of Concerns**: Planning is text, execution uses tools
+2. **Flexibility**: Custom tags allow arbitrary structured output without predefined schemas
+3. **Streaming**: Plans can stream to UI before being complete
+4. **Stateful Context**: Files selected via embeddings, not tool calls
+5. **Multi-Model Support**: Groq (Llama) and Anthropic (Claude) use same tag format
+
+This means any **AI SDK migration** would need to:
+- Keep the custom tag parsing infrastructure
+- Only convert the `text_editor_20241022` tool to new SDK format
+- Consider if `latest_subchart_version`/`latest_kubernetes_version` should become SDK tools

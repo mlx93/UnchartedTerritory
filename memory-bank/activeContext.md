@@ -58,10 +58,12 @@ All PRDs have been created and validated. Ready to begin implementation of PR1.
 |----------|--------|-----------|
 | Migration approach | Hybrid: New system primary, legacy deprecated | Meets "replace" requirement with safety net |
 | Go LLM responsibility | None after PR1.5 | Clean separation: Node thinks, Go executes |
-| Tool migration | Port ALL existing tools (6 total) | Feature parity requirement |
+| Tool migration | 4 tools (3 existing + 1 new) | Feature parity; workspace creation handled by homepage flow |
 | Go communication | HTTP endpoints (not PostgreSQL queue) | Synchronous tool execution |
 | PR structure | 3 PRs (Foundation → Parity → Validation) | Clear deliverables, risk isolation |
 | System prompts | Migrate to Node | Colocation with LLM calls |
+
+**Note on Tools (Updated Dec 3)**: After codebase analysis, determined that workspace/chart creation happens via homepage TypeScript flow BEFORE chat begins. AI SDK needs only 4 tools: getChartContext (TypeScript-only), textEditor, latestSubchartVersion, latestKubernetesVersion.
 
 ---
 

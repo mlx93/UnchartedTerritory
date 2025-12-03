@@ -1,11 +1,11 @@
 # PRD3: Chartsmith Validation Agent & Live Provider Switching
 ## Functional Requirements Document
 
-**Version**: 1.1
+**Version**: 1.2
 **PR**: PR2 of 2
 **Timeline**: Days 4-6 (3 days)
 **Status**: Ready for Implementation
-**Prerequisite**: PR1 (AI SDK Migration) merged
+**Prerequisite**: PR1.5 (Migration & Feature Parity) merged
 
 ---
 

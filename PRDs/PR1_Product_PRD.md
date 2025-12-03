@@ -1,8 +1,8 @@
 # PRD1: Chartsmith Vercel AI SDK Migration
 ## Functional Requirements Document
 
-**Version**: 1.0  
-**PR**: PR1 of 2  
+**Version**: 1.1  
+**PR**: PR1 of 3  
 **Timeline**: Days 1-3 (3 days)  
 **Status**: Ready for Implementation
 

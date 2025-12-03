@@ -1,10 +1,10 @@
 # PR1.5: AI SDK Tool Integration - Technical Specification
 
-**Version**: 1.0
+**Version**: 2.0
 **PR**: PR1.5 (Migration & Feature Parity)
 **Prerequisite**: PR1 merged
 **Status**: Ready for Implementation
-**Last Updated**: December 2, 2025
+**Last Updated**: December 3, 2025
 
 ---
 
@@ -14,18 +14,40 @@
 
 Add tool execution capability to the AI SDK chat system created in PR1. This requires:
 1. New Go HTTP server (port 8080) - does not exist today
-2. 6 AI SDK tool definitions in TypeScript - call Go endpoints
-3. Go HTTP handlers - execute tool logic using existing functions
+2. 4 AI SDK tool definitions in TypeScript
+3. Go HTTP handlers for 3 tools (textEditor, latestSubchartVersion, latestKubernetesVersion)
+4. TypeScript-only implementation for getChartContext (direct call to getWorkspace())
 
 ### Key Architecture Decision
 
 | Question | Decision | Rationale |
 |----------|----------|-----------|
-| Workspace creation | Go implements own SQL | Simplicity, no network hop |
+| Workspace creation | **Not needed** - homepage flow handles this | AI SDK chat only runs after workspace exists |
+| getChartContext | TypeScript-only (no Go endpoint) | Direct call to getWorkspace() is simpler |
 | K8s versions | Keep hardcoded | Feature parity, stability |
 | text_editor insert | Remove from scope | Does not exist in codebase |
 | Auth pattern | Go validates extension tokens | Match existing Next.js pattern |
 | HTTP router | net/http.ServeMux | No external dependencies |
+
+### Key Insight: Workspace Creation Flow
+
+The workspace is created by TypeScript server actions on the homepage **before** the AI SDK chat begins:
+
+```
+EXISTING FLOW (No changes needed):
+1. User on homepage (/)
+2. User types prompt, clicks submit
+3. TypeScript: createWorkspaceFromPromptAction() runs
+   └─ Creates workspace with bootstrap template
+   └─ Creates chat message with prompt
+   └─ Enqueues "new_intent" for Go worker
+4. User redirected to /workspace/{id}
+   └─ Workspace ALREADY EXISTS at this point
+5. AI SDK chat begins
+   └─ Works within existing workspace
+```
+
+**The AI SDK chat only needs tools for operations within an existing workspace.**
 
 ---
 
@@ -53,16 +75,24 @@ Add tool execution capability to the AI SDK chat system created in PR1. This req
 │                                                                  │
 │  lib/ai/llmClient.ts     - Shared LLM client, provider factory   │
 │  lib/ai/prompts.ts       - System prompts                        │
-│  lib/ai/tools/*.ts       - Tool definitions (6 total)            │
+│  lib/ai/tools/*.ts       - Tool definitions (4 total)            │
 │  lib/ai/tools/utils.ts   - Shared error handling                 │
 │                                                                  │
-│  Tools:                                                          │
-│  - createChart             → POST /api/tools/charts/create       │
-│  - getChartContext         → GET  /api/tools/charts/:id          │
-│  - updateChart             → PATCH /api/tools/charts/:id         │
-│  - textEditor              → POST /api/tools/editor              │
-│  - latestSubchartVersion   → POST /api/tools/versions/subchart   │
-│  - latestKubernetesVersion → POST /api/tools/versions/kubernetes │
+│  Tools (4 total):                                                │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ GO BACKEND TOOLS (need HTTP endpoints):                      ││
+│  │ - textEditor              → POST /api/tools/editor           ││
+│  │ - latestSubchartVersion   → POST /api/tools/versions/subchart││
+│  │ - latestKubernetesVersion → POST /api/tools/versions/k8s     ││
+│  │                                                              ││
+│  │ TYPESCRIPT-ONLY TOOLS (no Go endpoint):                      ││
+│  │ - getChartContext         → Direct getWorkspace() call       ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+│  REMOVED (not needed - handled by existing flows):               │
+│  ✗ createChart        - Homepage flow handles workspace creation │
+│  ✗ updateChart        - Use iterative textEditor instead        │
+│  ✗ createEmptyWorkspace - Homepage flow handles this            │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼ HTTP (JSON, non-streaming)
@@ -73,9 +103,8 @@ Add tool execution capability to the AI SDK chat system created in PR1. This req
 │  pkg/api/server.go            - HTTP server on :8080             │
 │  pkg/api/auth.go              - Token validation                 │
 │  pkg/api/errors.go            - Standardized error responses     │
-│  pkg/api/handlers/charts.go   - Chart CRUD operations            │
-│  pkg/api/handlers/editor.go   - File operations                  │
-│  pkg/api/handlers/versions.go - Version lookups                  │
+│  pkg/api/handlers/editor.go   - File operations (textEditor)     │
+│  pkg/api/handlers/versions.go - Version lookups (both tools)     │
 │                                                                  │
 │  NO LLM CALLS                                                    │
 └─────────────────────────────────────────────────────────────────┘
@@ -105,7 +134,7 @@ All existing dependencies remain unchanged.
 
 ## File Structure Changes
 
-### New Files (TypeScript) - 9 files
+### New Files (TypeScript) - 7 files
 
 ```
 chartsmith-app/
@@ -114,19 +143,17 @@ chartsmith-app/
 │       ├── llmClient.ts                    # Shared LLM client
 │       ├── prompts.ts                      # System prompts
 │       └── tools/
-│           ├── createChart.ts              # Chart creation tool
-│           ├── getChartContext.ts          # Chart loading tool
-│           ├── updateChart.ts              # Chart update tool
-│           ├── textEditor.ts               # File operations tool
-│           ├── latestSubchartVersion.ts    # Subchart lookup tool
-│           ├── latestKubernetesVersion.ts  # K8s version tool
-│           └── utils.ts                    # Shared utilities
+│           ├── getChartContext.ts          # Chart context (TypeScript-only, no Go)
+│           ├── textEditor.ts               # File operations tool (calls Go)
+│           ├── latestSubchartVersion.ts    # Subchart lookup tool (calls Go)
+│           ├── latestKubernetesVersion.ts  # K8s version tool (calls Go)
+│           └── utils.ts                    # Shared HTTP utility for Go calls
 └── tests/
     └── integration/
-        └── create-chart.test.ts            # Integration test
+        └── tools.test.ts                   # Integration test
 ```
 
-### New Files (Go) - 5 files
+### New Files (Go) - 4 files
 
 ```
 pkg/
@@ -135,8 +162,7 @@ pkg/
     ├── auth.go                             # Token validation
     ├── errors.go                           # Error response utilities
     └── handlers/
-        ├── charts.go                       # Chart endpoints
-        ├── versions.go                     # Version endpoints
+        ├── versions.go                     # Both version endpoints
         └── editor.go                       # Editor endpoint
 ```
 
@@ -144,7 +170,7 @@ pkg/
 
 | File | Changes |
 |------|---------|
-| app/api/chat/route.ts | Add 6 tools to streamText |
+| app/api/chat/route.ts | Add 4 tools to streamText |
 | cmd/run.go | Start HTTP server in goroutine |
 | package.json | Remove @anthropic-ai/sdk |
 
@@ -170,13 +196,12 @@ pkg/llm/system.go           # Source for prompt migration
 
 **Route Registration**:
 ```
-POST /api/tools/charts/create    → handlers.CreateChart
-GET  /api/tools/charts/{id}      → handlers.GetChartContext
-PATCH /api/tools/charts/{id}     → handlers.UpdateChart
-POST /api/tools/editor           → handlers.TextEditor
+POST /api/tools/editor              → handlers.TextEditor
 POST /api/tools/versions/subchart   → handlers.GetSubchartVersion
 POST /api/tools/versions/kubernetes → handlers.GetKubernetesVersion
 ```
+
+**Note**: Only 3 Go endpoints needed. `getChartContext` is TypeScript-only (direct call to `getWorkspace()`). Workspace creation is handled by the existing homepage flow.
 
 **Startup Pattern** (in cmd/run.go):
 ```
@@ -249,92 +274,41 @@ FUNCTION ExtractUserID(r *http.Request) (userID string, error)
 
 ## API Endpoint Specifications
 
-### POST /api/tools/charts/create
+### getChartContext (TypeScript-Only - No Go Endpoint)
 
-**Handler**: `pkg/api/handlers/charts.go:CreateChart`
+**File**: `lib/ai/tools/getChartContext.ts`
 
-**Request Body**:
-```
-CreateChartRequest {
-    Name        string `json:"name"`
-    Description string `json:"description"`
-    Type        string `json:"type,omitempty"`
-}
-```
+This tool does NOT require a Go HTTP endpoint. It calls the existing TypeScript `getWorkspace()` function directly:
 
-**Response Body**:
-```
-CreateChartResponse {
-    Success     bool   `json:"success"`
-    WorkspaceID string `json:"workspaceId"`
-    RevisionID  int    `json:"revisionNumber"`
-    Message     string `json:"message"`
-}
-```
+```typescript
+// lib/ai/tools/getChartContext.ts
+import { getWorkspace } from '@/lib/workspace/workspace'
 
-**Logic Flow**:
-1. Extract and validate extension token
-2. Parse request body
-3. Generate workspace ID (12-char random string)
-4. Begin database transaction
-5. Query bootstrap workspace
-6. INSERT into workspace table
-7. INSERT into workspace_revision (revision 0)
-8. Copy charts from bootstrap_chart
-9. Copy files from bootstrap_file
-10. Commit transaction
-11. Enqueue render_workspace work
-12. Return success response
-
-**Database Operations** (SQL Pattern from workspace.ts:30-99):
-```
-INSERT INTO workspace (id, created_at, last_updated_at, name, created_by_user_id, created_type, current_revision_number)
-VALUES ($1, now(), now(), $2, $3, 'chat', 0)
-
-INSERT INTO workspace_revision (workspace_id, revision_number, created_at, created_by_user_id, created_type, is_complete, is_rendered)
-VALUES ($1, 0, now(), $2, 'chat', true, false)
+export const getChartContext = tool({
+  description: 'Get the current chart context including all files and metadata',
+  parameters: z.object({
+    workspaceId: z.string().describe('The workspace ID to load'),
+  }),
+  execute: async ({ workspaceId }) => {
+    // Direct TypeScript call - no HTTP needed
+    const workspace = await getWorkspace(workspaceId)
+    return {
+      success: true,
+      workspace: {
+        id: workspace.id,
+        name: workspace.name,
+        revisionNumber: workspace.currentRevisionNumber,
+        files: workspace.files,
+        charts: workspace.charts,
+      }
+    }
+  },
+})
 ```
 
-### GET /api/tools/charts/{id}
+**Rationale**: The `getWorkspace()` function already exists in TypeScript and returns all necessary data. Adding a Go HTTP endpoint would add unnecessary latency with no benefit.
 
-**Handler**: `pkg/api/handlers/charts.go:GetChartContext`
-
-**Path Parameter**: id (workspace ID)
-
-**Response Body**: Full workspace object from GetWorkspace()
-
-**Logic Flow**:
-1. Extract and validate extension token
-2. Extract workspace ID from path
-3. Validate workspace access
-4. Call workspace.GetWorkspace(ctx, workspaceID)
-5. Return workspace as JSON
-
-### PATCH /api/tools/charts/{id}
-
-**Handler**: `pkg/api/handlers/charts.go:UpdateChart`
-
-**Request Body**:
-```
-UpdateChartRequest {
-    Changes []Change `json:"changes"`
-    Message string   `json:"message"`
-}
-
-Change {
-    Type  string `json:"type"`
-    Path  string `json:"path,omitempty"`
-    Value any    `json:"value,omitempty"`
-}
-```
-
-**Logic Flow**:
-1. Validate auth and workspace access
-2. Load current workspace
-3. Apply changes to files
-4. Create new revision via workspace.CreateRevision()
-5. Enqueue render_workspace work
-6. Return success with new revision number
+---
 
 ### POST /api/tools/editor
 
@@ -456,29 +430,24 @@ SWITCH semverField:
 | Table | Operations | Handler |
 |-------|------------|---------|
 | extension_token | SELECT | All (auth) |
-| workspace | SELECT, INSERT | CreateChart, GetChartContext |
-| workspace_revision | SELECT, INSERT | CreateChart, UpdateChart |
-| workspace_chart | SELECT, INSERT | CreateChart, GetChartContext |
-| workspace_file | SELECT, INSERT, UPDATE | All file operations |
-| bootstrap_workspace | SELECT | CreateChart |
-| bootstrap_chart | SELECT | CreateChart |
-| bootstrap_file | SELECT | CreateChart |
+| workspace | SELECT | TextEditor (via workspace functions) |
+| workspace_revision | SELECT | TextEditor (via workspace functions) |
+| workspace_chart | SELECT | TextEditor (via workspace functions) |
+| workspace_file | SELECT, UPDATE | TextEditor |
+
+**Note**: No workspace creation tables needed - workspace creation is handled by the existing homepage TypeScript flow before AI SDK chat begins.
 
 ### Existing Functions to Reuse
 
 | Function | Package | Purpose |
 |----------|---------|---------|
-| GetWorkspace | workspace | Load workspace with all related data |
-| CreateRevision | workspace | Create new revision with copy-on-write |
+| GetWorkspace | workspace | Load workspace with all related data (used by getChartContext in TypeScript) |
 | ListFiles | workspace | Get file list for revision |
 | GetFile | workspace | Get single file content |
 | SetFileContentPending | workspace | Update file content |
-| CreateChart | workspace | Create empty chart |
 | AddFileToChart | workspace | Add file to chart |
-| ApplyPatch | diff | Apply unified diff |
 | PerformStringReplacement | llm | String replacement with fuzzy matching |
 | GetLatestSubchartVersion | recommendations | ArtifactHub lookup |
-| EnqueueWork | persistence | Trigger pg_notify |
 | ListUserIDsForWorkspace | workspace | Get workspace owners |
 
 ### Connection Pool Usage
@@ -494,35 +463,13 @@ defer conn.Release()
 
 ### Tool Definition Pattern
 
-**File**: `lib/ai/tools/createChart.ts` (example)
+**File**: `lib/ai/tools/textEditor.ts` (example - calls Go HTTP)
 
 ```
 IMPORT tool from 'ai'
 IMPORT z from 'zod'
 IMPORT callGoEndpoint from './utils'
 
-EXPORT createChart = tool({
-    description: "Create a new Helm chart...",
-
-    parameters: z.object({
-        name: z.string().describe('Chart name'),
-        description: z.string().describe('What the chart should do'),
-        type: z.enum(['deployment', 'statefulset', 'cronjob', 'custom'])
-            .optional()
-            .describe('Primary workload type'),
-    }),
-
-    execute: async (params) => {
-        return callGoEndpoint('/api/tools/charts/create', params)
-    },
-})
-```
-
-### textEditor Tool Definition
-
-**File**: `lib/ai/tools/textEditor.ts`
-
-```
 EXPORT textEditor = tool({
     description: "View, edit, or create files in the chart...",
 
@@ -541,85 +488,95 @@ EXPORT textEditor = tool({
 })
 ```
 
+### getChartContext Tool Definition (TypeScript-Only)
+
+**File**: `lib/ai/tools/getChartContext.ts`
+
+```
+IMPORT tool from 'ai'
+IMPORT z from 'zod'
+IMPORT { getWorkspace } from '@/lib/workspace/workspace'
+
+EXPORT getChartContext = tool({
+    description: "Get the current chart context including all files and metadata",
+
+    parameters: z.object({
+        workspaceId: z.string().describe('The workspace ID to load'),
+    }),
+
+    execute: async ({ workspaceId }) => {
+        // Direct TypeScript call - no HTTP endpoint needed
+        const workspace = await getWorkspace(workspaceId)
+        return {
+            success: true,
+            workspace: {
+                id: workspace.id,
+                name: workspace.name,
+                revisionNumber: workspace.currentRevisionNumber,
+                files: workspace.files,
+                charts: workspace.charts,
+            }
+        }
+    },
+})
+```
+
+**Note**: This tool does NOT call a Go HTTP endpoint. It directly calls the existing TypeScript `getWorkspace()` function.
+
 ### Shared Utility Pattern
 
 **File**: `lib/ai/tools/utils.ts`
 
-```
-CONST GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080'
+**Auth Header Forwarding Problem**:
+The AI SDK `tool({ execute })` pattern only receives tool parameters, not the HTTP request context.
 
-EXPORT ASYNC FUNCTION callGoEndpoint<T>(endpoint, body):
-    response = await fetch(GO_BACKEND_URL + endpoint, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': forwardedAuthHeader  // from request context
-        },
-        body: JSON.stringify(body)
-    })
+**Solution**:
+1. `callGoEndpoint(endpoint, body, authHeader)` - takes auth header as parameter
+2. `createTools(authHeader, workspaceId)` - factory function that creates all 4 tools with auth header captured in closure
+3. Route handler extracts auth header first, then calls `createTools()`
 
-    IF not response.ok:
-        error = await response.json()
-        THROW new Error(error.message || 'Go endpoint failed')
-
-    RETURN response.json()
-```
+**callGoEndpoint Logic**:
+- POST to `GO_BACKEND_URL + endpoint` with JSON body
+- Include Authorization header if provided
+- Return parsed JSON response or throw error with message
 
 ### Chat Route Integration
 
 **File**: `app/api/chat/route.ts` (modification)
 
-```
-IMPORT runChat from '@/lib/ai/llmClient'
-IMPORT createChart, getChartContext, updateChart from tools
-IMPORT textEditor, latestSubchartVersion, latestKubernetesVersion from tools
-IMPORT getSystemPrompt from '@/lib/ai/prompts'
+**Request Body Change from PR1**:
+- PR1: `{ messages, provider, model }`
+- PR1.5: `{ messages, model, workspaceId, revisionNumber }`
 
-EXPORT ASYNC FUNCTION POST(req):
-    PARSE { messages, model, workspaceId, revisionNumber } from req.json()
+Tools need `workspaceId` to operate on the correct workspace.
 
-    result = await runChat({
-        model,
-        messages,
-        system: getSystemPrompt({ workspaceId, revisionNumber }),
-        tools: {
-            createChart,
-            getChartContext,
-            updateChart,
-            textEditor,
-            latestSubchartVersion,
-            latestKubernetesVersion,
-        },
-    })
-
-    RETURN result.toDataStreamResponse()
-```
+**Route Handler Logic**:
+1. Extract auth header from request (for Go HTTP calls)
+2. Parse request body including new `workspaceId` and `revisionNumber` fields
+3. Call `createTools(authHeader, workspaceId)` to get tools with auth in closure
+4. Call `runChat()` with model, messages, system prompt, and tools
+5. Return streaming response
 
 ### LLM Client Library
 
 **File**: `lib/ai/llmClient.ts`
 
-```
-IMPORT streamText from 'ai'
-IMPORT createOpenRouter from '@openrouter/ai-sdk-provider'
+**Relationship with PR1's provider.ts**:
+- PR1 created `lib/ai/provider.ts` with `getModel()` and `AVAILABLE_PROVIDERS`
+- PR1.5's `llmClient.ts` **imports from and extends** `provider.ts` - does NOT replace it
 
-EXPORT FUNCTION getModel(modelId):
-    openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY })
-    RETURN openrouter(modelId)
+**Exports**:
+- `runChat(options)` - NEW wrapper around `streamText()` that accepts tools
+- `getModel()` - re-exported from provider.ts
+- `AVAILABLE_PROVIDERS` - re-exported from provider.ts
 
-EXPORT ASYNC FUNCTION runChat(options):
-    RETURN streamText({
-        model: getModel(options.model),
-        messages: options.messages,
-        system: options.system,
-        tools: options.tools,
-    })
-
-EXPORT CONST AVAILABLE_MODELS = [
-    { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'openai' },
-    { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'anthropic' },
-]
-```
+**lib/ai/ File Summary**:
+| File | Source | Purpose |
+|------|--------|---------|
+| `provider.ts` | PR1 | `getModel()`, `AVAILABLE_PROVIDERS` |
+| `llmClient.ts` | PR1.5 | `runChat()` wrapper with tools support |
+| `prompts.ts` | PR1.5 | System prompts |
+| `tools/*.ts` | PR1.5 | Tool definitions |
 
 ### System Prompts
 
@@ -630,20 +587,20 @@ EXPORT FUNCTION getSystemPrompt(context):
     basePrompt = `
     You are Chartsmith, an AI assistant for Helm charts.
 
-    ## Available Tools
-    - createChart: Create a new Helm chart from requirements
+    ## Available Tools (4 total)
     - getChartContext: Load current chart files and metadata
-    - updateChart: Modify existing chart configuration
     - textEditor: View, edit, or create specific files (commands: view, create, str_replace)
     - latestSubchartVersion: Look up subchart versions on ArtifactHub
     - latestKubernetesVersion: Get Kubernetes version information
 
     ## Behavior Guidelines
-    - When revisionNumber is 0 or user wants a new chart, use createChart
-    - For questions about current chart state, use getChartContext first
-    - For specific file changes, use textEditor
+    - The workspace already exists when chat begins (created via homepage)
+    - Use getChartContext to understand the current chart state
+    - For specific file changes, use textEditor (view, then str_replace, or create)
     - For subchart dependencies, use latestSubchartVersion
     - For K8s API compatibility, use latestKubernetesVersion
+    - For chart generation, use <chartsmithArtifact> tags (existing flow)
+    - For action plans, use <chartsmithActionPlan> tags (existing flow)
     `
 
     IF context.chartContext:
@@ -684,33 +641,32 @@ No new Go environment variables required. Uses existing:
 
 ### Phase 1: Go HTTP Server
 
-1. Create pkg/api/server.go with route registration
+1. Create pkg/api/server.go with route registration (3 routes only)
 2. Create pkg/api/auth.go with token validation
 3. Create pkg/api/errors.go with response helpers
 4. Modify cmd/run.go to start HTTP server in goroutine
 5. Test: Verify server starts on port 8080
 
-### Phase 2: Go Handlers
+### Phase 2: Go Handlers (3 handlers)
 
-1. Create pkg/api/handlers/charts.go
-   - CreateChart handler with workspace creation SQL
-   - GetChartContext handler with GetWorkspace call
-   - UpdateChart handler with CreateRevision call
-2. Create pkg/api/handlers/editor.go
+1. Create pkg/api/handlers/editor.go
    - TextEditor handler with view/create/str_replace
-3. Create pkg/api/handlers/versions.go
+2. Create pkg/api/handlers/versions.go
    - GetSubchartVersion with ArtifactHub call
    - GetKubernetesVersion with hardcoded values
-4. Test: Each endpoint with curl/httpie
+3. Test: Each endpoint with curl/httpie
 
-### Phase 3: TypeScript Tools
+### Phase 3: TypeScript Tools (4 tools)
 
-1. Create lib/ai/tools/utils.ts with callGoEndpoint
-2. Create each tool definition file
-3. Create lib/ai/llmClient.ts
-4. Create lib/ai/prompts.ts
-5. Modify app/api/chat/route.ts
-6. Test: Tool invocation via chat
+1. Create lib/ai/tools/utils.ts with callGoEndpoint helper
+2. Create lib/ai/tools/getChartContext.ts (TypeScript-only, no Go)
+3. Create lib/ai/tools/textEditor.ts (calls Go)
+4. Create lib/ai/tools/latestSubchartVersion.ts (calls Go)
+5. Create lib/ai/tools/latestKubernetesVersion.ts (calls Go)
+6. Create lib/ai/llmClient.ts
+7. Create lib/ai/prompts.ts
+8. Modify app/api/chat/route.ts to register 4 tools
+9. Test: Tool invocation via chat
 
 ### Phase 4: Integration & Cleanup
 
@@ -763,7 +719,7 @@ npm run test:integration
 
 | PR1 Component | PR1.5 Integration |
 |---------------|-------------------|
-| /api/chat/route.ts | Add tools parameter to streamText |
+| /api/chat/route.ts | Add 4 tools to streamText |
 | useChat hook | Tools work automatically via AI SDK |
 | OpenRouter provider | Tools use same model instance |
 | ProviderSelector | No changes needed |
@@ -773,21 +729,21 @@ npm run test:integration
 | Existing Function | PR1.5 Usage |
 |-------------------|-------------|
 | persistence.MustGetPooledPostgresSession | Database connections |
-| workspace.GetWorkspace | Load chart context |
-| workspace.CreateRevision | Create new revision |
 | workspace.ListFiles | List chart files |
+| workspace.GetFile | Get file content |
 | workspace.SetFileContentPending | Update file content |
 | workspace.AddFileToChart | Create new file |
 | llm.PerformStringReplacement | Text editor str_replace |
 | recommendations.GetLatestSubchartVersion | Subchart lookup |
-| persistence.EnqueueWork | Trigger renders |
+
+**Note**: `workspace.GetWorkspace` is called from TypeScript (getChartContext tool), not from Go HTTP endpoints.
 
 ### With Database
 
 All database access through existing persistence layer:
 - Connection pool from InitPostgres()
-- Transaction support for workspace creation
 - No schema changes required
+- No workspace creation from Go (handled by homepage TypeScript flow)
 
 ---
 
@@ -796,22 +752,26 @@ All database access through existing persistence layer:
 ### Function References
 - [ ] All Go function references match actual codebase signatures
 - [ ] No references to non-existent functions
-- [ ] Correct package names (workspace, persistence, diff, recommendations)
+- [ ] Correct package names (workspace, persistence, recommendations)
 
-### Tool Definitions
+### Tool Definitions (4 total)
+- [ ] getChartContext is TypeScript-only (no Go endpoint)
 - [ ] textEditor has only: view, create, str_replace (NO insert)
 - [ ] latestKubernetesVersion uses semverField (NOT channel)
 - [ ] latestSubchartVersion matches existing ArtifactHub integration
 
 ### Architecture
 - [ ] HTTP server added to cmd/run.go, runs in goroutine
+- [ ] Only 3 Go HTTP endpoints (editor, versions/subchart, versions/kubernetes)
 - [ ] Auth pattern matches existing extension token validation
 - [ ] All handlers use persistence.MustGetPooledPostgresSession()
+- [ ] No createChart, updateChart, or createEmptyWorkspace endpoints
 
 ### Testing
 - [ ] Integration tests for each HTTP endpoint
 - [ ] Auth failure returns 401/404 (not 403)
-- [ ] Tool → Go HTTP → Response pattern verified
+- [ ] Tool → Go HTTP → Response pattern verified (for 3 Go tools)
+- [ ] getChartContext TypeScript-only implementation verified
 
 ---
 
@@ -820,8 +780,7 @@ All database access through existing persistence layer:
 Decisions that can be made during implementation:
 
 1. **Error logging**: Should handlers log to str_replace_log table?
-2. **Render trigger**: Should createChart auto-trigger render?
-3. **File validation**: Should textEditor validate YAML syntax?
+2. **File validation**: Should textEditor validate YAML syntax?
 
 ---
 

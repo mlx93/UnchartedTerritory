@@ -68,16 +68,17 @@
 | Create shared LLM client (`lib/ai/llmClient.ts`) | 🔲 | Must |
 | Create Go HTTP server (`pkg/api/server.go`) | 🔲 | Must |
 | Create error response utilities (`pkg/api/errors.go`) | 🔲 | Must |
-| Create createChart tool + endpoint | 🔲 | Must |
-| Create getChartContext tool + endpoint | 🔲 | Nice |
-| Create updateChart tool + endpoint | 🔲 | Nice |
-| Create textEditor tool + endpoint | 🔲 | Must |
-| Create latestSubchartVersion tool + endpoint | 🔲 | Must |
-| Create latestKubernetesVersion tool + endpoint | 🔲 | Must |
+| Create getChartContext tool (TypeScript-only) | 🔲 | Must |
+| Create textEditor tool + Go endpoint | 🔲 | Must |
+| Create latestSubchartVersion tool + Go endpoint | 🔲 | Must |
+| Create latestKubernetesVersion tool + Go endpoint | 🔲 | Must |
 | Migrate system prompts to Node | 🔲 | Must |
 | Remove @anthropic-ai/sdk | 🔲 | Must |
 | Create integration test | 🔲 | Must |
+| **Update ARCHITECTURE.md** | 🔲 | **Must** |
 | Mark legacy files as deprecated | 🔲 | Should |
+
+**Note**: createChart, updateChart, and createEmptyWorkspace tools are NOT needed - workspace creation is handled by existing homepage TypeScript flow before chat begins.
 
 ### PR2: Validation Agent (Days 4-6)
 
@@ -107,15 +108,14 @@
 - [ ] No console errors during normal operation
 
 ### PR1.5
-- [ ] "Create a nginx chart" works end-to-end via AI SDK chat
-- [ ] createChart tool invokes Go endpoint correctly
-- [ ] Chart appears in database after creation
-- [ ] latestSubchartVersion returns valid version data
-- [ ] latestKubernetesVersion returns valid version data
-- [ ] textEditor view/create/str_replace work correctly
+- [ ] getChartContext returns workspace data via TypeScript getWorkspace()
+- [ ] textEditor view/create/str_replace work via Go HTTP endpoint
+- [ ] latestSubchartVersion returns valid version data via Go HTTP endpoint
+- [ ] latestKubernetesVersion returns valid version data via Go HTTP endpoint
 - [ ] No @anthropic-ai/sdk in node_modules
 - [ ] Integration tests pass
 - [ ] Error responses follow standard format
+- [ ] ARCHITECTURE.md updated (Replicated requirement)
 
 ### PR2
 - [ ] "Validate my chart" triggers validation tool

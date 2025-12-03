@@ -2,7 +2,7 @@
 
 **Project**: Chartsmith AI SDK Migration  
 **Date**: December 2, 2025  
-**Updated**: December 2, 2025 (added Decision 8, updated Decision 3 for full tool migration)  
+**Updated**: December 3, 2025 (revised Decision 3: 4 tools based on codebase analysis)  
 **Scope**: PR1, PR1.5, and PR2 architectural choices
 
 ---
@@ -168,40 +168,43 @@ Chartsmith has 3 existing tools in Go (Anthropic-native format):
 | `latest_subchart_version` | Look up subchart versions on ArtifactHub | `pkg/llm/conversational.go` |
 | `latest_kubernetes_version` | Get current Kubernetes version info | `pkg/llm/conversational.go` |
 
-### Decision: Port ALL Existing Tools for Full Feature Parity
+### Decision: Port Existing Tools + Add Context Tool (4 Tools Total)
 
-**Ported to AI SDK (PR1.5):**
-- `textEditor` - Essential for file operations in chat
-- `createChart` - New tool for chart creation flow
-- `getChartContext` - New tool for loading chart state
-- `updateChart` - New tool for chart modifications
-- `latestSubchartVersion` - **Ported for feature parity** (existing tool)
-- `latestKubernetesVersion` - **Ported for feature parity** (existing tool)
+**Updated December 3, 2025**: After deeper codebase analysis, we discovered that workspace/chart creation happens via the existing homepage TypeScript flow (`createWorkspaceFromPromptAction()`) BEFORE the AI SDK chat begins. The AI SDK chat only needs tools for operations **within** an existing workspace.
+
+**AI SDK Tools (PR1.5) - 4 Total:**
+- `getChartContext` - Load current chart files and metadata (TypeScript-only, calls existing `getWorkspace()`)
+- `textEditor` - View, edit, create files (Go HTTP endpoint)
+- `latestSubchartVersion` - Look up subchart versions on ArtifactHub (Go HTTP endpoint)
+- `latestKubernetesVersion` - Get current Kubernetes version info (Go HTTP endpoint)
+
+**Tools NOT Needed** (handled by existing homepage flow):
+- `createChart` - Workspace creation uses homepage flow + queue, not tool call
+- `updateChart` - Updates use iterative textEditor, not batch operations
+- `createEmptyWorkspace` - Workspace creation uses homepage flow
 
 ### Rationale
 
-1. **Requirement compliance**: The original requirement explicitly states "All existing features continue to work (tool calling, file context, etc.)" - this mandates porting ALL existing tools
-2. **Demo requirement**: "Demonstrate creating a new chart via chat" requires `createChart`
-3. **Complete feature parity**: Users should have identical capabilities in the new chat system
-4. **No regressions**: Deferring utility tools would constitute a feature regression
+1. **Requirement compliance**: The original requirement explicitly states "All existing features continue to work (tool calling, file context, etc.)" - this is satisfied by porting the 3 existing tools
+2. **Demo requirement**: "Demonstrate creating a new chart via chat" is satisfied by the existing homepage flow - user types prompt, clicks submit, workspace is created, then chat begins
+3. **Simpler architecture**: No need to duplicate workspace creation logic in tools
+4. **Feature parity**: All 3 existing Go tools are wrapped in AI SDK format
 
 ### Tool Mapping
 
-| Legacy Go Tool | AI SDK Tool | Status |
-|----------------|-------------|--------|
-| `text_editor_20241022` | `textEditor` | Ported in PR1.5 |
-| `latest_subchart_version` | `latestSubchartVersion` | **Ported in PR1.5** |
-| `latest_kubernetes_version` | `latestKubernetesVersion` | **Ported in PR1.5** |
-| (new) | `createChart` | Created in PR1.5 |
-| (new) | `getChartContext` | Created in PR1.5 |
-| (new) | `updateChart` | Created in PR1.5 |
+| Legacy Go Tool | AI SDK Tool | Implementation |
+|----------------|-------------|----------------|
+| `text_editor_20241022` | `textEditor` | Go HTTP endpoint |
+| `latest_subchart_version` | `latestSubchartVersion` | Go HTTP endpoint |
+| `latest_kubernetes_version` | `latestKubernetesVersion` | Go HTTP endpoint |
+| (new) | `getChartContext` | TypeScript-only (calls `getWorkspace()`) |
 
 ### Implications
 
-- **6 tools total** in the new AI SDK chat system
-- Full feature parity maintained - no capabilities lost
-- Legacy Go tool code serves as implementation reference
-- New AI SDK chat provides complete chart lifecycle AND utility capabilities
+- **4 tools total** in the new AI SDK chat system
+- Full feature parity maintained for existing tool capabilities
+- Workspace creation remains in existing homepage flow (no changes needed)
+- Simpler tool set reduces complexity and maintenance burden
 
 ---
 
@@ -294,7 +297,7 @@ Original plan had 2 PRs. Analysis revealed PR1 would be overloaded with both fou
 **PR1.5: Migration & Feature Parity**
 - Shared LLM client library
 - Go HTTP server and tool endpoints
-- AI SDK tools (createChart, getChartContext, updateChart, textEditor)
+- AI SDK tools (4 total: getChartContext, textEditor, latestSubchartVersion, latestKubernetesVersion)
 - System prompt migration
 - Remove @anthropic-ai/sdk from TypeScript
 - Deprecation of legacy chat
@@ -419,13 +422,11 @@ AI SDK tools communicate with Go via synchronous HTTP request/response:
 │                                                                  │
 │  lib/ai/llmClient.ts     - Shared LLM client, provider factory   │
 │  lib/ai/prompts.ts       - System prompts                        │
-│  lib/ai/tools/*.ts       - Tool definitions (6 total)            │
+│  lib/ai/tools/*.ts       - Tool definitions (4 total)            │
 │  lib/ai/tools/utils.ts   - Shared error handling                 │
 │                                                                  │
-│  Tools (PR1.5):                                                  │
-│  - createChart             → POST /api/tools/charts/create       │
-│  - getChartContext         → GET  /api/tools/charts/:id          │
-│  - updateChart             → PATCH /api/tools/charts/:id         │
+│  Tools (PR1.5) - 4 total:                                        │
+│  - getChartContext         → TypeScript-only (getWorkspace())    │
 │  - textEditor              → POST /api/tools/editor              │
 │  - latestSubchartVersion   → POST /api/tools/versions/subchart   │
 │  - latestKubernetesVersion → POST /api/tools/versions/kubernetes │
@@ -441,8 +442,7 @@ AI SDK tools communicate with Go via synchronous HTTP request/response:
 │                                                                  │
 │  pkg/api/server.go            - HTTP server on :8080             │
 │  pkg/api/errors.go            - Standardized error responses     │
-│  pkg/api/handlers/charts.go   - Chart CRUD operations            │
-│  pkg/api/handlers/editor.go   - File operations                  │
+│  pkg/api/handlers/editor.go   - File operations (textEditor)     │
 │  pkg/api/handlers/versions.go - Version lookups (ArtifactHub, K8s)│
 │  pkg/validation/*             - Validation pipeline (PR2)        │
 │                                                                  │
@@ -473,7 +473,7 @@ AI SDK tools communicate with Go via synchronous HTTP request/response:
 |---|----------|--------|
 | 1 | Parallel vs. Replacement | Hybrid: New system primary, legacy deprecated |
 | 2 | Go LLM Responsibility | None: Go becomes pure application logic |
-| 3 | Tool Migration | **Port ALL existing tools for full feature parity (6 tools total)** |
+| 3 | Tool Migration | **4 tools total** (3 existing + 1 new; workspace creation via homepage flow) |
 | 4 | Go Endpoint Design | RPC-style under `/api/tools/` with RESTful verbs |
 | 5 | Go Communication | Non-streaming JSON request/response |
 | 6 | PR Structure | 3 PRs: Foundation → Parity → Validation |

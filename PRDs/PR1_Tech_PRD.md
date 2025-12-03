@@ -1,8 +1,8 @@
 # PRD2: Chartsmith Vercel AI SDK Migration
 ## Technical Specification Document
 
-**Version**: 1.0  
-**PR**: PR1 of 2  
+**Version**: 1.1  
+**PR**: PR1 of 3  
 **Timeline**: Days 1-3 (3 days)  
 **Status**: Ready for Implementation
 
@@ -420,7 +420,7 @@ FUNCTION POST(request):
 
 **NOTE**: Tool calling (US-4 in PR1_Product_PRD.md) is delivered in **PR1.5**, not PR1. The PR structure is:
 - **PR1**: AI SDK foundation (no tools)
-- **PR1.5**: Migration & Feature Parity (adds 6 tools: createChart, getChartContext, updateChart, textEditor, latestSubchartVersion, latestKubernetesVersion)
+- **PR1.5**: Migration & Feature Parity (adds 4 tools: getChartContext, textEditor, latestSubchartVersion, latestKubernetesVersion)
 - **PR2**: Validation Agent (adds validateChart tool)
 
 **PR1.5 Implementation** (see PR1.5_PLAN.md for details):
