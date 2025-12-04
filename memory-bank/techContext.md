@@ -10,7 +10,7 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Next.js | Latest | React framework, SSR, API routes |
+| Next.js | 15.3.0 | React framework, SSR, API routes |
 | React | 18+ | UI components |
 | TypeScript | 5.x | Type safety |
 | Jotai | - | State management (existing) |
@@ -20,48 +20,98 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Go | 1.22+ | Worker processes, tool execution |
+| Go | 1.24.4 | Worker processes, tool execution HTTP server |
 | PostgreSQL | 15+ | Primary database |
 | Centrifugo | - | Real-time WebSocket server |
 
-### AI/LLM
+### AI/LLM (Updated for PR1.5)
 
-| Technology | Purpose |
-|------------|---------|
-| Vercel AI SDK (`ai`) | Core LLM integration |
-| AI SDK React (`@ai-sdk/react`) | React hooks (useChat) |
-| OpenRouter Provider | Multi-model access |
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| Vercel AI SDK (`ai`) | ^5.0.106 | Core LLM integration |
+| AI SDK React (`@ai-sdk/react`) | ^2.0.106 | React hooks (useChat) |
+| AI SDK OpenAI (`@ai-sdk/openai`) | - | Direct OpenAI provider |
+| AI SDK Anthropic (`@ai-sdk/anthropic`) | - | Direct Anthropic provider |
+| OpenRouter Provider | ^0.4.0 | Multi-model fallback |
+| Zod | ^3.22.0 | Schema validation (tools) |
 
 ---
 
-## New Dependencies (Migration)
+## Dependencies (After PR1.5)
 
-### To Install
+### Installed
 
 ```json
 {
   "dependencies": {
-    "ai": "^4.0.0",
-    "@ai-sdk/react": "^1.0.0",
+    "ai": "^5.0.106",
+    "@ai-sdk/react": "^2.0.106",
+    "@ai-sdk/openai": "installed",
+    "@ai-sdk/anthropic": "installed",
     "@openrouter/ai-sdk-provider": "^0.4.0",
     "zod": "^3.22.0"
   }
 }
 ```
 
-### To Remove
+### Removed (PR1.5 ✅)
 
 ```json
 {
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0"  // REMOVE
+    "@anthropic-ai/sdk": "REMOVED"  // Fully removed from package.json AND package-lock.json
   }
 }
 ```
 
-### Retained
+---
 
-All existing Next.js, React, and UI component libraries remain unchanged.
+## AI SDK v5 Specifics
+
+### API Differences from v4 Documentation
+
+| v4 Pattern | v5 Actual |
+|------------|-----------|
+| `Message` type | `UIMessage` type |
+| `api` option in useChat | `TextStreamChatTransport` |
+| `handleSubmit()` | `sendMessage()` |
+| `toDataStreamResponse()` | `toTextStreamResponse()` |
+| `parameters` in tool() | `inputSchema` in tool() |
+| Input managed by useChat | Input managed separately |
+
+### Tool Definition Pattern (v5 - PR1.5 ✅)
+
+```typescript
+import { tool } from 'ai';
+import { z } from 'zod';
+
+const myTool = tool({
+  description: 'Tool description',
+  inputSchema: z.object({  // NOTE: inputSchema, not parameters
+    param1: z.string(),
+    param2: z.enum(['a', 'b']).optional(),
+  }),
+  execute: async (params: { param1: string; param2?: string }) => {
+    // Tool logic - explicit typing required
+    return result;
+  },
+});
+```
+
+### Streaming Pattern (v5)
+
+```typescript
+import { streamText } from 'ai';
+
+const result = streamText({
+  model: getModel(provider),
+  messages: convertedMessages,
+  system: SYSTEM_PROMPT,
+  tools: createTools(authHeader, workspaceId, revisionNumber),  // PR1.5
+});
+
+return result.toTextStreamResponse();  // NOT toDataStreamResponse
+```
 
 ---
 
@@ -86,7 +136,7 @@ docker-compose up -d
 ### Start Applications
 
 ```bash
-# Terminal 1: Go worker
+# Terminal 1: Go worker (now includes HTTP server on port 8080)
 make run-worker
 
 # Terminal 2: Next.js dev server
@@ -99,6 +149,9 @@ npm run dev
 ```bash
 # TypeScript unit tests (Jest)
 npm run test:unit
+
+# Integration tests (PR1.5)
+npx jest lib/ai/__tests__/integration/tools.test.ts
 
 # E2E tests (Playwright)
 npm run test:e2e
@@ -114,19 +167,26 @@ go test ./pkg/... -v
 ### Required for AI SDK
 
 ```env
-# OpenRouter API Key (required for PR1+)
+# Direct API Keys (preferred - avoids OpenRouter limits)
+ANTHROPIC_API_KEY=sk-ant-xxx
+OPENAI_API_KEY=sk-xxx
+
+# Fallback (if direct keys unavailable)
 OPENROUTER_API_KEY=sk-or-v1-xxxxx
 
-# Optional fallback
-OPENAI_API_KEY=sk-xxxxx
+# Configuration (defaults)
+DEFAULT_AI_PROVIDER=anthropic
+DEFAULT_AI_MODEL=anthropic/claude-sonnet-4-20250514
 
-# Configuration
-DEFAULT_AI_PROVIDER=openai
-DEFAULT_AI_MODEL=openai/gpt-4o
-
-# Go backend URL (PR1.5+)
+# Go backend URL (PR1.5)
 GO_BACKEND_URL=http://localhost:8080
 ```
+
+### Provider Priority
+
+1. `ANTHROPIC_API_KEY` → Direct Anthropic API (preferred)
+2. `OPENAI_API_KEY` → Direct OpenAI API
+3. `OPENROUTER_API_KEY` → OpenRouter (fallback)
 
 ### Existing (Preserved)
 
@@ -147,47 +207,68 @@ TOKEN_ENCRYPTION=xxx  # AES-256-GCM key
 GOOGLE_CLIENT_SECRET=xxx
 NEXT_PUBLIC_GOOGLE_CLIENT_ID=xxx
 
-# Existing AI (Go backend - unchanged)
-ANTHROPIC_API_KEY=xxx  # Still used by Go until PR1.5
+# Go AI APIs (still used by Go worker for non-chat features)
 GROQ_API_KEY=xxx       # Used by Go for intent detection
 VOYAGE_API_KEY=xxx     # Used by Go for embeddings
 ```
 
 ---
 
-## Project Structure
+## Project Structure (After PR1.5)
 
 ```
 chartsmith/
 ├── chartsmith-app/           # Next.js frontend
 │   ├── app/
-│   │   ├── api/              # API routes
-│   │   │   └── chat/         # NEW (PR1)
-│   │   └── workspace/        # Workspace pages
-│   ├── atoms/                # Jotai state
-│   ├── components/           # React components
-│   ├── hooks/                # Custom hooks
+│   │   ├── api/
+│   │   │   └── chat/         # AI SDK route (PR1)
+│   │   │       ├── route.ts  # Modified for tools (PR1.5)
+│   │   │       └── __tests__/
+│   │   ├── test-ai-chat/     # Test page (PR1)
+│   │   └── workspace/        # Existing workspace pages
+│   ├── components/
+│   │   └── chat/             # AI SDK components (PR1)
+│   │       ├── AIChat.tsx
+│   │       ├── AIMessageList.tsx
+│   │       └── ProviderSelector.tsx
 │   ├── lib/
-│   │   ├── ai/               # NEW (PR1/PR1.5)
-│   │   └── llm/              # LEGACY (to be removed)
+│   │   ├── ai/               # AI SDK core
+│   │   │   ├── config.ts     # PR1
+│   │   │   ├── models.ts     # PR1
+│   │   │   ├── provider.ts   # PR1
+│   │   │   ├── llmClient.ts  # PR1.5 ✅
+│   │   │   ├── prompts.ts    # PR1.5 ✅
+│   │   │   ├── __tests__/
+│   │   │   │   └── integration/
+│   │   │   │       └── tools.test.ts  # PR1.5 ✅
+│   │   │   └── tools/        # PR1.5 ✅
+│   │   │       ├── utils.ts
+│   │   │       ├── index.ts
+│   │   │       ├── getChartContext.ts
+│   │   │       ├── textEditor.ts
+│   │   │       ├── latestSubchartVersion.ts
+│   │   │       └── latestKubernetesVersion.ts
+│   │   └── llm/              # Empty (prompt-type.ts deleted)
 │   └── tests/                # Playwright E2E
 │
-├── chartsmith-extension/     # VS Code Extension
-│
 ├── cmd/                      # Go entry points
-│   ├── run.go                # Worker startup
-│   └── main.go               # Entry point
+│   ├── run.go                # Modified to start HTTP server (PR1.5)
+│   └── main.go
 │
 ├── pkg/                      # Go packages
-│   ├── api/                  # NEW (PR1.5) - HTTP handlers
-│   ├── llm/                  # LEGACY - Anthropic integration
+│   ├── api/                  # PR1.5 ✅ - NEW HTTP handlers
+│   │   ├── server.go
+│   │   ├── errors.go
+│   │   └── handlers/
+│   │       ├── response.go
+│   │       ├── context.go
+│   │       ├── editor.go
+│   │       └── versions.go
+│   ├── llm/                  # Existing - Groq integration
 │   ├── listener/             # PostgreSQL queue handlers
 │   ├── realtime/             # Centrifugo integration
-│   ├── validation/           # NEW (PR2)
+│   ├── validation/           # PR2 - Validation pipeline
 │   └── workspace/            # Workspace management
-│
-├── db/                       # Database schema
-│   └── schema/tables/        # 31 table definitions
 │
 └── hack/chartsmith-dev/      # Development environment
     └── docker-compose.yml
@@ -195,66 +276,7 @@ chartsmith/
 
 ---
 
-## Technical Constraints
-
-### Architecture Constraints
-
-1. **No new databases**: Only PostgreSQL + Centrifugo (per ARCHITECTURE.md)
-2. **Server actions over API routes**: Follow existing patterns where possible
-3. **SSR preferred**: Avoid "Loading..." states (per chartsmith-app/ARCHITECTURE.md)
-4. **Jotai state**: Components subscribe to atoms, no callback passing
-
-### Security Constraints
-
-1. API keys must stay server-side
-2. All LLM calls through server-side routes
-3. Path validation to prevent traversal attacks
-4. No arbitrary code execution from validation tools
-
-### Performance Constraints
-
-1. Streaming latency: < 200ms time-to-first-token
-2. UI responsiveness: < 100ms for user interactions
-3. Bundle size increase: < 50KB from AI SDK packages
-4. Validation timeout: 30 seconds maximum
-
----
-
-## External APIs
-
-### OpenRouter (NEW)
-
-- **Purpose**: Multi-provider LLM access
-- **Models**: 300+ models via single API
-- **Used by**: PR1+ for all LLM calls
-- **Documentation**: [openrouter.ai/docs](https://openrouter.ai/docs)
-
-### ArtifactHub (Existing)
-
-- **Purpose**: Helm chart repository search
-- **Used by**: `latestSubchartVersion` tool
-- **Endpoint**: `https://artifacthub.io/api/v1/`
-
-### Anthropic (Existing - Go only)
-
-- **Purpose**: LLM calls from Go backend
-- **Models**: claude-3-7-sonnet, claude-3-5-sonnet
-- **Status**: Remains for Go until PR1.5 deprecation
-
-### Groq (Existing - Go only)
-
-- **Purpose**: Intent detection, feedback, file conversion
-- **Models**: llama-3.3-70b-versatile
-- **Status**: Unchanged by migration
-
-### Voyage (Existing - Go only)
-
-- **Purpose**: Embeddings
-- **Status**: Unchanged by migration
-
----
-
-## Go HTTP Server (PR1.5)
+## Go HTTP Server (PR1.5 ✅)
 
 ### Configuration
 
@@ -265,76 +287,95 @@ chartsmith/
 ### Routes
 
 ```
-POST  /api/tools/charts/create    → handlers.CreateChart
-GET   /api/tools/charts/{id}      → handlers.GetChartContext
-PATCH /api/tools/charts/{id}      → handlers.UpdateChart
-POST  /api/tools/editor           → handlers.TextEditor
-POST  /api/tools/versions/subchart   → handlers.GetSubchartVersion
-POST  /api/tools/versions/kubernetes → handlers.GetKubernetesVersion
-POST  /api/validate               → handlers.Validate (PR2)
+GET   /health                       → Health check
+POST  /api/tools/context            → handlers.GetChartContext ✅
+POST  /api/tools/editor             → handlers.TextEditor ✅
+POST  /api/tools/versions/subchart  → handlers.GetSubchartVersion ✅
+POST  /api/tools/versions/kubernetes→ handlers.GetKubernetesVersion ✅
+POST  /api/validate                 → handlers.Validate (PR2)
 ```
 
 ---
 
-## Existing Go Functions to Reuse
+## Existing Go Functions Reused (PR1.5)
 
-| Function | Package | Purpose |
+| Function | Package | Used In |
 |----------|---------|---------|
-| `GetWorkspace` | workspace | Load workspace with all related data |
-| `CreateRevision` | workspace | Create new revision with copy-on-write |
-| `ListFiles` | workspace | Get file list for revision |
-| `GetFile` | workspace | Get single file content |
-| `SetFileContentPending` | workspace | Update file content |
-| `CreateChart` | workspace | Create empty chart |
-| `AddFileToChart` | workspace | Add file to chart |
-| `ApplyPatch` | diff | Apply unified diff |
-| `PerformStringReplacement` | llm | String replacement with fuzzy matching |
-| `GetLatestSubchartVersion` | recommendations | ArtifactHub lookup |
-| `EnqueueWork` | persistence | Trigger pg_notify |
-| `ListUserIDsForWorkspace` | workspace | Get workspace owners |
+| `workspace.ListCharts` | workspace | context.go, editor.go |
+| `workspace.AddFileToChart` | workspace | editor.go |
+| `workspace.SetFileContentPending` | workspace | editor.go |
+| `llm.PerformStringReplacement` | llm | editor.go |
+| `recommendations.GetLatestSubchartVersion` | recommendations | versions.go |
 
 ---
 
-## Testing Infrastructure
+## Testing Infrastructure (Updated PR1.5)
 
-### TypeScript Unit Tests (Jest)
-
-```
-atoms/__tests__/workspace.test.ts      # Jotai atom state
-components/__tests__/FileTree.test.ts  # Patch statistics
-hooks/__tests__/parseDiff.test.ts      # Diff parsing
-```
-
-### Playwright E2E Tests
+### TypeScript Tests
 
 ```
-tests/chat-scrolling.spec.ts       # Auto-scroll behavior
-tests/import-artifactory.spec.ts   # ArtifactHub import
-tests/login.spec.ts                # Login flow
-tests/upload-chart.spec.ts         # Chart upload
+lib/ai/__tests__/provider.test.ts              # PR1 - Provider factory
+lib/ai/__tests__/config.test.ts                # PR1 - Config
+lib/ai/__tests__/integration/tools.test.ts     # PR1.5 ✅ - 22 integration tests
+app/api/chat/__tests__/route.test.ts           # PR1 - API route
+lib/__tests__/ai-mock-utils.ts                 # Existing - AI SDK mocks
 ```
 
 ### Go Tests
 
 ```
 pkg/diff/apply_test.go                    # Diff application
-pkg/diff/reconstruct_test.go              # Diff reconstruction
-pkg/listener/new-conversion_test.go       # K8s conversion
 pkg/llm/execute-action_test.go            # Action execution
-pkg/llm/parser_test.go                    # Response parsing
 pkg/llm/string_replacement_test.go        # String replacement
 ```
 
 ---
 
-## Browser Compatibility
+## Technical Constraints
 
-- Chrome (latest 2 versions)
-- Firefox (latest 2 versions)
-- Safari (latest 2 versions)
-- Edge (latest 2 versions)
+### Architecture Constraints
+
+1. **No new databases**: Only PostgreSQL + Centrifugo
+2. **Server actions over API routes**: Follow existing patterns
+3. **SSR preferred**: Avoid "Loading..." states
+4. **Jotai state**: Components subscribe to atoms
+
+### Security Constraints
+
+1. API keys must stay server-side
+2. All LLM calls through server-side routes
+3. Path validation to prevent traversal attacks (PR2)
+4. No arbitrary code execution from validation tools
+
+### Next.js Bundling Constraint (Discovered PR1.5)
+
+**Issue**: Importing `getWorkspace()` in TypeScript tools caused bundling errors because `pg` module uses Node.js-only modules (`dns`, `net`, `tls`).
+
+**Solution**: All 4 tools call Go HTTP endpoints. Avoids bundling issues and creates consistent architecture.
 
 ---
 
-*This document captures the technical environment for the Chartsmith migration.*
+## External APIs
 
+### OpenRouter (via Provider Factory)
+- **Purpose**: Multi-provider fallback
+- **Models**: 300+ models via single API
+
+### Anthropic (Direct + Go)
+- **Purpose**: Primary LLM provider
+- **Default Model**: `claude-sonnet-4-20250514`
+
+### OpenAI (Direct)
+- **Purpose**: Secondary LLM provider
+
+### ArtifactHub (via Go)
+- **Purpose**: Helm chart repository search
+- **Used by**: `latestSubchartVersion` tool
+
+### Groq (Go only)
+- **Purpose**: Intent detection, feedback
+- **Status**: Unchanged by migration
+
+---
+
+*This document captures the technical environment for the Chartsmith migration. Last updated: Dec 4, 2025 (PR1.5 complete)*

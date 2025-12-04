@@ -27,7 +27,12 @@ This is the **substantial Go work** that demonstrates learning for the Uncharted
 
 ## PR1 Context (ALREADY COMPLETE)
 
-PR1 created these foundations you will build on:
+PR1 created these foundations you will build on.
+
+### Additional Reference Documents
+- `docs/PR1_COMPLETION_REPORT.md` - Actual PR1 implementation details
+- `docs/PR1_COMPLETION_REPORT_ADDENDUM.md` - API changes, provider priority, bug fixes
+- `docs/POST_PR15_INTEGRATION_PLAN.md` - How tools will integrate into main app after PR1.5
 
 ### What Already Exists
 | File | What It Does |
@@ -38,16 +43,22 @@ PR1 created these foundations you will build on:
 | `chartsmith-app/lib/ai/models.ts` | Model definitions (Claude Sonnet 4 default) |
 | `chartsmith-app/components/chat/AIChat.tsx` | Chat UI with `useChat` hook integration |
 | `chartsmith-app/app/test-ai-chat/page.tsx` | Test page matching production UI - **USE THIS TO VALIDATE TOOLS** |
+| `chartsmith-app/lib/__tests__/ai-mock-utils.ts` | **Existing AI SDK mock utilities** - use for tool tests |
+
+### Current API Route Structure
+The existing `route.ts` uses:
+- `streamText()` from AI SDK with model and messages
+- `toTextStreamResponse()` for streaming (NOT toDataStreamResponse)
+- `getModel(provider)` from provider.ts
+- `CHARTSMITH_SYSTEM_PROMPT` from config.ts
+
+**Your task**: Add a `tools` parameter to the existing `streamText()` call.
 
 ### Current Request Body Format
-```typescript
-// PR1 format (current)
-interface ChatRequestBody {
-  messages: UIMessage[];
-  provider?: 'openai' | 'anthropic';
-  model?: string;
-}
-```
+PR1 format: `{ messages, provider, model }`
+
+### Default Model
+Now `anthropic/claude-sonnet-4-20250514` (updated in PR1 Addendum)
 
 ### @anthropic-ai/sdk Status
 **ALREADY REMOVED** in PR1. Do NOT spend time on this - it's done.
@@ -91,9 +102,15 @@ interface ChatRequestBody {
 
 ### 1. getChartContext is TypeScript-ONLY
 - Does NOT call a Go HTTP endpoint
-- Directly calls existing `getWorkspace()` function from `@/lib/workspace/queries`
+- Directly calls existing workspace function
 - Returns workspace files and chart metadata
-- Discover the exact function signature by reading the workspace queries file
+
+**Discovery**: Find the correct function by searching:
+```bash
+grep -r "getWorkspace" chartsmith-app/lib/
+grep -r "export.*workspace" chartsmith-app/lib/workspace/
+```
+Likely in `lib/workspace/queries.ts` or `lib/workspace/workspace.ts` - verify before using.
 
 ### 2. Request Body Change (PR1 → PR1.5)
 - PR1 format: `{ messages, provider, model }`
@@ -111,6 +128,52 @@ interface ChatRequestBody {
 - Re-exports `getModel`, `AVAILABLE_PROVIDERS`, `Provider` from provider.ts
 - Adds any shared utilities needed across tools
 - Single source of truth for provider configuration remains in provider.ts
+
+---
+
+## AI SDK v5 Tool Definition Pattern
+
+Tools use the `tool()` helper from `ai` package with Zod schemas for parameters.
+
+### Tool Structure (Pseudocode)
+```
+import { tool } from 'ai'
+import { z } from 'zod'
+
+export function createMyTool(authHeader, workspaceId) {
+  return tool({
+    description: 'What the tool does',
+    parameters: z.object({
+      param1: z.string(),
+      param2: z.enum(['option1', 'option2']).optional(),
+    }),
+    execute: async (params) => {
+      // For Go-backed tools:
+      return callGoEndpoint('/api/tools/...', { ...params, workspaceId }, authHeader)
+      
+      // For TypeScript-only tools (getChartContext):
+      return await someExistingFunction(params)
+    },
+  })
+}
+```
+
+### Tool Context Flow
+1. `route.ts` extracts `workspaceId` from request body (NEW in PR1.5)
+2. `route.ts` extracts `Authorization` header from request
+3. Tool factory functions receive both: `createTextEditorTool(authHeader, workspaceId)`
+4. Tools capture these in closure - available when `execute()` is called
+5. `callGoEndpoint` uses auth header for Go HTTP requests
+
+### Modifying streamText() in route.ts
+Find the existing `streamText()` call and add the `tools` parameter:
+```
+// Before (PR1)
+streamText({ model, messages, system })
+
+// After (PR1.5)
+streamText({ model, messages, system, tools })
+```
 
 ---
 
@@ -144,10 +207,15 @@ For each Go handler, **reuse existing production functions** - do NOT reimplemen
 
 ### `pkg/api/server.go`
 - Create HTTP server function that returns `*http.Server`
-- Use chi router (already a dependency in the project - check go.mod)
 - Register 3 POST routes under `/api/tools/`
 - Add appropriate middleware (logging, recovery, CORS if needed)
 - Listen on port 8080
+
+**Router Discovery**:
+1. Check `chartsmith/go.mod` for existing router dependency (chi, gorilla/mux, etc.)
+2. If chi exists: use `github.com/go-chi/chi/v5`
+3. If gorilla/mux exists: use that
+4. If no router: use `net/http.ServeMux` (Go 1.22+ has pattern matching)
 
 ### Starting the Server (`cmd/run.go`)
 - Find existing worker startup code in `cmd/run.go`

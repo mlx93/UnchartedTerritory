@@ -1,10 +1,10 @@
 # Chartsmith Current Architecture
 
-**Purpose**: Document the existing Chartsmith architecture before migration, explaining how the current code works.
+**Purpose**: Document the current Chartsmith architecture after PR1, explaining how both the new AI SDK system and existing system work.
 
 ---
 
-## High-Level System Overview
+## High-Level System Overview (After PR1)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -12,36 +12,52 @@
 ├─────────────────────────┬───────────────────────────────────────┤
 │   Next.js Web App       │      VS Code Extension                │
 │   (TypeScript/React)    │      (TypeScript)                     │
-│   - Custom Chat UI      │      - Token-based Auth               │
-│   - Jotai state mgmt    │      - Bearer token header            │
-│   - @anthropic-ai/sdk   │      - /api/auth/status endpoint      │
-│     (prompt-type only)  │                                       │
+│                         │                                       │
+│   NEW (PR1):            │      Token-based Auth                 │
+│   - AIChat component    │      Bearer token header              │
+│   - useChat hook        │      /api/auth/status endpoint        │
+│   - ProviderSelector    │                                       │
+│   - /test-ai-chat page  │                                       │
+│                         │                                       │
+│   EXISTING (preserved): │                                       │
+│   - Jotai state mgmt    │                                       │
+│   - ChatContainer       │                                       │
+│   - Centrifugo WS       │                                       │
 └─────────────┬───────────┴───────────────────┬───────────────────┘
               │                               │
               ▼                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                        API LAYER                                 │
 │                     Next.js API Routes                           │
+│                                                                  │
+│   NEW (PR1):                                                     │
+│   - /api/chat (AI SDK streamText, toTextStreamResponse)          │
+│                                                                  │
+│   EXISTING (preserved):                                          │
 │   - /api/workspace/[id]/message (creates chat via work queue)   │
 │   - /api/auth/status (token validation)                         │
-│   - NO direct /api/chat route currently exists                  │
 └─────────────────────────────┬───────────────────────────────────┘
-                              │ PostgreSQL Work Queue
-                              │ (pg_notify / LISTEN)
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        BACKEND LAYER                             │
-│                        Go Backend                                │
-│   - Helm chart processing (pkg/helm/)                           │
-│   - LLM integration (pkg/llm/) - 13 files                       │
-│   - Tool execution (text_editor tool)                           │
-│   - Real-time updates via Centrifugo                            │
-└─────────────────────────────────────────────────────────────────┘
                               │
-                              ▼
+              ┌───────────────┴───────────────┐
+              │                               │
+              ▼ NEW: Direct LLM              ▼ EXISTING: PostgreSQL Queue
+┌──────────────────────────┐    ┌────────────────────────────────┐
+│   LLM PROVIDERS (PR1)     │    │       GO BACKEND               │
+│                           │    │                                │
+│ Priority:                 │    │ - Helm chart processing        │
+│ 1. Direct Anthropic API   │    │ - LLM integration (pkg/llm/)   │
+│ 2. Direct OpenAI API      │    │ - Tool execution               │
+│ 3. OpenRouter fallback    │    │ - Real-time via Centrifugo     │
+│                           │    │                                │
+│ Default: Claude Sonnet 4  │    │ PR1.5: Adds HTTP server :8080  │
+└──────────────────────────┘    └────────────────────────────────┘
+                                              │
+                                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     EXTERNAL SERVICES                            │
-│   - Anthropic Claude API (claude-3-7-sonnet, claude-3-5-sonnet) │
+│   - Anthropic Claude API                                         │
+│   - OpenAI API (NEW in PR1)                                      │
+│   - OpenRouter API (NEW in PR1)                                  │
 │   - Groq API (intent, feedback, file conversion - llama-3.3)    │
 │   - Voyage API (embeddings)                                      │
 │   - Artifact Hub (dependency fetching)                          │
@@ -51,157 +67,161 @@
 
 ---
 
-## Key Architectural Characteristics
+## Dual Chat Systems (PR1 State)
 
-### What Makes This Non-Standard
+### NEW: AI SDK Chat System
 
-1. **No `/api/chat` HTTP Endpoint**
-   - Messages go through `/api/workspace/[id]/message`
-   - Creates entry in `workspace_chat` table
-   - Triggers `pg_notify()` to Go worker
+| Component | Purpose |
+|-----------|---------|
+| `/api/chat/route.ts` | API endpoint using `streamText` |
+| `lib/ai/provider.ts` | Provider factory with `getModel()` |
+| `lib/ai/models.ts` | Model definitions |
+| `lib/ai/config.ts` | System prompt and configuration |
+| `components/chat/AIChat.tsx` | Chat UI with `useChat` hook |
+| `components/chat/AIMessageList.tsx` | Parts-based message rendering |
+| `components/chat/ProviderSelector.tsx` | Model selection dropdown |
+| `/test-ai-chat` | Test page matching production UI |
 
-2. **Go Backend Has NO HTTP Server**
-   - All communication via PostgreSQL LISTEN/NOTIFY
-   - No direct HTTP calls from frontend to Go
-
-3. **All LLM Calls Happen in Go Backend**
-   - Frontend only does prompt classification (orphaned code)
-   - Go handles all Anthropic/Groq SDK calls
-
-4. **State Managed via Jotai Atoms**
-   - `messagesAtom`, `plansAtom`, etc. in `atoms/workspace.ts`
-   - Not using AI SDK state management
-
-5. **Streaming via Centrifugo WebSocket**
-   - Not standard HTTP/SSE streaming
-   - Real-time updates pushed from Go to frontend
-
-6. **3 Existing Tools (Anthropic-native format in Go)**
-   - `text_editor_20241022`
-   - `latest_subchart_version`
-   - `latest_kubernetes_version`
-
----
-
-## Chat Message Flow (Current)
-
+**Flow**:
 ```
-1. User types message in ChatContainer.tsx
-                    │
-                    ▼
-2. createChatMessageAction (server action)
-                    │
-                    ▼
-3. INSERT into workspace_chat table
-                    │
-                    ▼
-4. pg_notify() via lib/utils/queue.ts
-                    │
-                    ▼
-5. Go worker receives via pkg/listener/listener.go
-                    │
-                    ▼
-6. Handler processes (new_intent, new_plan, etc.)
-                    │
-                    ▼
-7. LLM call via pkg/llm/* (Anthropic SDK)
-                    │
-                    ▼
-8. Response sent via Centrifugo WebSocket
-                    │
-                    ▼
-9. useCentrifugo.ts receives update
-                    │
-                    ▼
-10. Jotai atoms updated, UI re-renders
+User → AIChat → useChat → POST /api/chat → streamText → LLM → SSE stream → UI
+```
+
+### EXISTING: Go-Based Chat System (Preserved)
+
+| Component | Purpose |
+|-----------|---------|
+| `ChatContainer.tsx` | Chat UI with Jotai state |
+| `createChatMessageAction` | Server action |
+| PostgreSQL `workspace_chat` | Message storage |
+| `pg_notify()` | Queue trigger |
+| Go worker `pkg/listener/` | Queue processor |
+| `pkg/llm/` | Anthropic SDK calls |
+| Centrifugo | Real-time streaming |
+
+**Flow**:
+```
+User → ChatContainer → Server Action → INSERT → pg_notify → Go → LLM → Centrifugo → UI
 ```
 
 ---
 
-## Frontend Architecture
+## PR1 Implementation Details
+
+### Provider Factory (`lib/ai/provider.ts`)
+
+```typescript
+// Exports
+export function getModel(provider?: string, modelId?: string): LanguageModel;
+export const AVAILABLE_PROVIDERS: ProviderConfig[];
+export const AVAILABLE_MODELS: ModelConfig[];
+export type Provider = 'openai' | 'anthropic';
+
+// Provider Priority (checks env vars)
+1. ANTHROPIC_API_KEY → createAnthropic() direct
+2. OPENAI_API_KEY → createOpenAI() direct
+3. OPENROUTER_API_KEY → createOpenRouter() fallback
+```
+
+### API Route (`/api/chat/route.ts`)
+
+```typescript
+// Request body (PR1)
+{ messages: UIMessage[], provider?: string, model?: string }
+
+// Response: AI SDK Text Stream (SSE)
+
+// Implementation uses:
+- streamText() from 'ai'
+- getModel() from provider.ts
+- toTextStreamResponse() (NOT toDataStreamResponse)
+```
+
+### AI SDK v5 Specifics
+
+| v4 Pattern | v5 Actual |
+|------------|-----------|
+| `Message` type | `UIMessage` type |
+| `api` option in useChat | `TextStreamChatTransport` |
+| `handleSubmit()` | `sendMessage()` |
+| `toDataStreamResponse()` | `toTextStreamResponse()` |
+
+---
+
+## Frontend Architecture (Updated)
 
 ### Component Hierarchy
 
 ```
+NEW (PR1):
+test-ai-chat Page
+└── EditorLayout
+    └── TopNav (logo, "by Replicated", Export)
+    └── AIChat
+        ├── ProviderSelector
+        ├── AIMessageList
+        │   └── Parts rendering (text, tool-invocation, etc.)
+        └── Input area
+
+EXISTING (Preserved):
 Workspace Page
 └── WorkspaceContent
     ├── FileTree (left panel)
     ├── CodeEditor (center)
     │   └── Monaco Editor
     └── ChatContainer (right panel)
-        ├── ChatMessages (scrollable list)
-        │   ├── ChatMessage
-        │   ├── PlanChatMessage
-        │   └── NewChartChatMessage
-        └── PromptInput (input field)
+        ├── ChatMessages (Jotai-based)
+        └── PromptInput
 ```
 
-### State Management (Jotai)
+### State Management
 
-Location: `chartsmith-app/atoms/workspace.ts`
+| System | State Source | Components |
+|--------|--------------|------------|
+| NEW | `useChat` hook | AIChat, AIMessageList |
+| EXISTING | Jotai atoms | ChatContainer, ChatMessages |
 
-| Atom | Purpose | Line |
-|------|---------|------|
-| `workspaceAtom` | Current workspace data | 6 |
-| `messagesAtom` | Chat message history | 10 |
-| `plansAtom` | Planning state | 16 |
-| `rendersAtom` | Render results | 22 |
-| `isRenderingAtom` | Rendering status | 259-261 |
-
-### Real-Time Updates
-
-Location: `chartsmith-app/hooks/useCentrifugo.ts`
-
-Centrifugo channels handle:
-- `plan-updated`
-- `chatmessage-updated`
-- `render-stream`
-- `artifact-updated`
-- `conversion-status`
+Jotai atoms preserved in `atoms/workspace.ts`:
+- `workspaceAtom` - Current workspace
+- `messagesAtom` - Chat history (existing system)
+- `plansAtom` - Planning state
+- `rendersAtom` - Render results
 
 ---
 
 ## Backend Architecture (Go)
 
-### Package Structure
+### Package Structure (Current)
 
 ```
 pkg/
-├── llm/                  # LLM integration (13 files)
+├── llm/                  # LLM integration (13 files) - STILL ACTIVE
 │   ├── client.go         # Anthropic client factory
 │   ├── execute-action.go # Tool execution (text_editor)
-│   ├── conversational.go # Chat with 2 utility tools
+│   ├── conversational.go # Chat with utility tools
 │   ├── intent.go         # Intent detection (Groq)
-│   ├── convert-file.go   # File conversion (Groq)
-│   ├── system.go         # System prompts
-│   ├── initial-plan.go   # Initial plan generation
-│   ├── plan.go           # Plan updates
-│   ├── execute-plan.go   # Execution planning
-│   ├── summarize.go      # Content summarization
-│   ├── expand.go         # Prompt expansion
-│   └── cleanup-converted-values.go
+│   └── ...
 │
 ├── listener/             # PostgreSQL queue handlers (19 files)
 │   ├── listener.go       # Work queue processor
-│   ├── start.go          # Channel registration (8 channels)
-│   ├── new_intent.go     # Intent processing
-│   ├── new-plan.go       # Plan generation
-│   ├── execute-plan.go   # Plan execution
-│   ├── apply-plan.go     # Apply changes
-│   ├── conversational.go # Chat handling
-│   └── render-workspace.go
+│   ├── start.go          # Channel registration
+│   └── ...
 │
 ├── realtime/             # Centrifugo integration
-│   └── centrifugo.go     # Event publishing
+│   └── centrifugo.go
 │
-└── workspace/            # Workspace management
-    └── types.go          # Workspace, Chart, File types
+├── workspace/            # Workspace management
+│   └── ...
+│
+└── api/                  # PR1.5 (NOT YET CREATED)
+    ├── server.go         # HTTP server on :8080
+    ├── errors.go         # Error utilities
+    └── handlers/         # Tool endpoints
 ```
 
-### PostgreSQL Queue Channels
+### PostgreSQL Queue Channels (Existing)
 
-The Go worker listens on these channels via `pkg/listener/start.go`:
-
+Go worker listens via `pkg/listener/start.go`:
 1. `new_intent`
 2. `new_plan`
 3. `execute_plan`
@@ -219,163 +239,119 @@ The Go worker listens on these channels via `pkg/listener/start.go`:
 
 | Model | Provider | Purpose |
 |-------|----------|---------|
-| `claude-3-7-sonnet-20250219` | Anthropic | Planning, conversational, summarization |
-| `claude-3-5-sonnet-20241022` | Anthropic | Action execution with text_editor tool |
-| `llama-3.3-70b-versatile` | Groq | Intent detection, feedback, file conversion |
+| `claude-sonnet-4-20250514` | Anthropic (Direct) | **Default** - AI SDK chat |
+| `gpt-4o` | OpenAI (Direct) | Alternative - AI SDK chat |
+| `claude-3-7-sonnet` | Anthropic | Go backend - planning |
+| `claude-3-5-sonnet` | Anthropic | Go backend - action execution |
+| `llama-3.3-70b-versatile` | Groq | Intent detection, feedback |
 
-### Existing Tools (Anthropic-native format)
+### Existing Tools (Go - Anthropic format)
 
-**text_editor_20241022** (`pkg/llm/execute-action.go:510-532`)
-```
-Commands: view, str_replace, create
-Purpose: File manipulation in Helm charts
-Includes fuzzy string matching (lines 238-435)
-```
+**text_editor_20241022** (`pkg/llm/execute-action.go`):
+- Commands: view, str_replace, create
+- Includes fuzzy string matching
 
-**Utility Tools** (`pkg/llm/conversational.go:99-128`)
-```
-latest_subchart_version - ArtifactHub lookup
-latest_kubernetes_version - K8s version info
-```
-
-### Groq Integration
-
-- **Intent Detection** (`intent.go:86-97`): Classifies user messages as developer/operator/ambiguous/off-topic
-- **Feedback Streaming** (`intent.go:151-270`): Provides contextual feedback
-- **File Conversion** (`convert-file.go:64-70`): Converts K8s manifests to Helm charts
+**Utility Tools** (`pkg/llm/conversational.go`):
+- `latest_subchart_version` - ArtifactHub lookup
+- `latest_kubernetes_version` - K8s version info
 
 ---
 
-## Database Schema (Key Tables)
+## API Routes
 
-| Table | Purpose |
-|-------|---------|
-| `workspace` | Workspace metadata |
-| `workspace_revision` | Revision history |
-| `workspace_chart` | Chart metadata |
-| `workspace_file` | File contents |
-| `workspace_chat` | Chat messages |
-| `work_queue` | Background job queue |
-| `extension_token` | VS Code extension auth |
-| `bootstrap_workspace` | Template workspaces |
-| `bootstrap_chart` | Template charts |
-| `bootstrap_file` | Template files |
-
----
-
-## VS Code Extension Authentication
-
-```
-┌──────────────┐     1. Click Login     ┌──────────────┐
-│   VS Code    │ ───────────────────────▶│   Browser    │
-│  Extension   │                         │  Auth Page   │
-└──────────────┘                         └──────┬───────┘
-       ▲                                        │
-       │                                        │ 2. Authenticate
-       │                                        ▼
-       │                                 ┌──────────────┐
-       │    4. Store & use token         │   Chartsmith │
-       │◀────────────────────────────────│   Backend    │
-       │                                 └──────┬───────┘
-       │                                        │
-       │         3. Generate extension token    │
-       └────────────────────────────────────────┘
-
-Token validation: GET /api/auth/status (Bearer token header)
-Endpoint: chartsmith-app/app/api/auth/status/route.ts
-```
-
----
-
-## API Routes (Existing)
+### NEW (PR1)
 
 | Route | Method | Purpose |
 |-------|--------|---------|
-| `/api/workspace/[id]/message` | POST | Create chat message |
+| `/api/chat` | POST | AI SDK streaming chat |
+
+### EXISTING (Preserved)
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/workspace/[id]/message` | POST | Create chat message (Go queue) |
 | `/api/workspace/[id]/messages` | GET | List messages |
 | `/api/workspace/[id]/plans` | GET | List plans |
 | `/api/workspace/[id]/revision` | POST | Create revision |
-| `/api/workspace/[id]/renders` | GET | List renders |
-| `/api/workspace/[id]` | GET | Get workspace |
 | `/api/auth/status` | GET | Token validation |
-| `/api/config` | GET | Public config |
-| `/api/push` | GET | Centrifugo token |
-| `/api/upload-chart` | POST | Chart upload |
 
-**Note**: No `/api/chat` route exists - this is created in PR1.
+### PR1.5 (To Be Created)
 
----
-
-## Frontend Anthropic SDK Usage
-
-**Single Import Location**: `chartsmith-app/lib/llm/prompt-type.ts:1`
-
-```typescript
-import Anthropic from '@anthropic-ai/sdk';
-```
-
-**Purpose**: Classify user prompts as "plan" or "chat"
-
-**Model**: `claude-3-5-sonnet-20241022`
-
-**Status**: ⚠️ ORPHANED CODE - The `promptType()` function is never called anywhere in the codebase. This file will be deleted during PR1.
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/tools/editor` | POST | textEditor tool |
+| `/api/tools/versions/subchart` | POST | latestSubchartVersion tool |
+| `/api/tools/versions/kubernetes` | POST | latestKubernetesVersion tool |
 
 ---
 
-## Environment Variables
+## Environment Variables (Updated)
 
-### AI/LLM APIs
+### AI SDK (PR1)
 
-| Variable | Frontend | Backend |
-|----------|----------|---------|
-| `ANTHROPIC_API_KEY` | `lib/llm/prompt-type.ts` (orphaned) | `pkg/param/param.go` |
-| `GROQ_API_KEY` | - | `pkg/param/param.go` |
-| `VOYAGE_API_KEY` | - | `pkg/param/param.go` |
+| Variable | Purpose |
+|----------|---------|
+| `ANTHROPIC_API_KEY` | Direct Anthropic API (priority 1) |
+| `OPENAI_API_KEY` | Direct OpenAI API (priority 2) |
+| `OPENROUTER_API_KEY` | OpenRouter fallback (priority 3) |
+| `DEFAULT_AI_PROVIDER` | Default provider (anthropic) |
+| `DEFAULT_AI_MODEL` | Default model |
 
-### Database & Services
+### Existing (Preserved)
 
 | Variable | Purpose |
 |----------|---------|
 | `CHARTSMITH_PG_URI` | PostgreSQL connection |
-| `CHARTSMITH_CENTRIFUGO_ADDRESS` | Centrifugo API |
-| `CHARTSMITH_CENTRIFUGO_API_KEY` | Centrifugo auth |
-| `CENTRIFUGO_TOKEN_HMAC_SECRET` | JWT signing |
-| `NEXT_PUBLIC_CENTRIFUGO_ADDRESS` | Client WebSocket |
-
-### Authentication
-
-| Variable | Purpose |
-|----------|---------|
-| `HMAC_SECRET` | JWT session signing |
-| `TOKEN_ENCRYPTION` | AES-256-GCM key |
-| `GOOGLE_CLIENT_SECRET` | OAuth secret |
-| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | OAuth client ID |
+| `CHARTSMITH_CENTRIFUGO_*` | Centrifugo config |
+| `GROQ_API_KEY` | Go intent detection |
+| `VOYAGE_API_KEY` | Go embeddings |
 
 ---
 
-## Current Limitations
+## What Changed in PR1
 
-1. **Single Provider Lock-in**: Only Anthropic Claude (Go backend)
-2. **Custom Streaming**: PostgreSQL queue + Centrifugo (not standard SSE)
-3. **State Management**: Jotai atoms, not AI SDK's `useChat`
-4. **Maintenance Burden**: Custom implementations throughout
-5. **No Tool Calling in Frontend**: All tools in Go backend
-6. **No `/api/chat` Route**: Messages go through workspace-specific routes
-
----
-
-## What Migration Changes
-
-| Aspect | Before | After (PR1.5+) |
-|--------|--------|----------------|
-| Chat route | `/api/workspace/[id]/message` | NEW `/api/chat` |
-| LLM calls | Go backend (Anthropic SDK) | Next.js (AI SDK + OpenRouter) |
-| Streaming | Centrifugo WebSocket | AI SDK Data Stream |
-| State | Jotai atoms | `useChat` hook |
-| Tools | 3 Go tools (Anthropic format) | 7 AI SDK tools |
-| Go role | All LLM + execution | Execution only (no LLM) |
+| Aspect | Before | After (PR1) |
+|--------|--------|-------------|
+| Chat route | None (Go queue only) | NEW `/api/chat` |
+| LLM calls | Go backend only | Go + Node (parallel) |
+| Streaming | Centrifugo only | Centrifugo + AI SDK SSE |
+| State | Jotai only | Jotai + useChat |
+| Frontend SDK | @anthropic-ai/sdk (orphaned) | **REMOVED** |
+| Providers | Anthropic only | Anthropic, OpenAI, OpenRouter |
+| Default model | claude-3-5-sonnet | claude-sonnet-4-20250514 |
 
 ---
 
-*This document captures how Chartsmith works before the AI SDK migration.*
+## What PR1.5 Will Change
 
+| Aspect | PR1 State | After PR1.5 |
+|--------|-----------|-------------|
+| Go HTTP server | None | Port 8080 with 3 endpoints |
+| AI SDK tools | None | 4 tools registered |
+| LLM calls in Go | Still active | Deprecated (only Groq for intent) |
+| System prompts | In Go | Migrated to Node |
+
+---
+
+## Test Coverage (PR1)
+
+```
+Test Suites: 7 passed, 7 total
+Tests:       61 passed, 61 total
+```
+
+### New Tests (PR1)
+
+| File | Tests | Coverage |
+|------|-------|----------|
+| `lib/ai/__tests__/provider.test.ts` | 19 | Provider factory, validation |
+| `lib/ai/__tests__/config.test.ts` | 6 | Config constants |
+| `app/api/chat/__tests__/route.test.ts` | 12 | API validation, errors |
+
+### Existing Test Utilities
+
+- `lib/__tests__/ai-mock-utils.ts` - AI SDK mocking (use for PR1.5)
+
+---
+
+*This document captures how Chartsmith works after PR1. Last updated: Dec 4, 2025*
