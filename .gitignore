@@ -11,3 +11,9 @@ OpenRouterKey
 .idea/
 *.swp
 
+
+# API Key files
+AnthropicKey
+OpenRouterKey
+GroqKey
+VoyageKey
