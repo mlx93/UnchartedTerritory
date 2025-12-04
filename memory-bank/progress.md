@@ -13,11 +13,22 @@
 | Architecture Decisions | ✅ Complete | 8 key decisions documented |
 | PR1 Implementation | ✅ **Complete** | AI SDK foundation working |
 | PR1.5 Implementation | ✅ **Complete** | Go HTTP server + 4 tools working |
+| PR1.6 Implementation | ✅ **Complete** | Test path feature parity |
+| PR1.7 Implementation | 🔲 Ready to Start | Deeper system integration |
 | PR2 Implementation | 🔲 Ready to Start | Awaiting implementation |
 
 ---
 
 ## What Already Works
+
+### PR1.6 Deliverables (All Working ✅)
+
+- [x] `lib/ai/prompts.ts` - Simplified system prompt (fixes tool execution)
+- [x] `app/test-ai-chat/page.tsx` - Landing page with workspace creation
+- [x] `app/test-ai-chat/[workspaceId]/page.tsx` - Server component data fetching
+- [x] `app/test-ai-chat/[workspaceId]/client.tsx` - Client with FileBrowser + persistence
+- [x] `lib/workspace/actions/create-ai-sdk-chat-message.ts` - User message persistence
+- [x] `lib/workspace/actions/update-chat-message-response.ts` - AI response persistence
 
 ### PR1.5 Deliverables (All Working ✅)
 
@@ -34,7 +45,6 @@
 - [x] `lib/ai/tools/latestKubernetesVersion.ts` - K8s version tool
 - [x] `lib/ai/tools/index.ts` - Tool factory and exports
 - [x] `lib/ai/llmClient.ts` - Shared LLM client
-- [x] `lib/ai/prompts.ts` - System prompts
 - [x] 22 integration tests passing
 - [x] All 4 Go endpoints verified via curl
 - [x] @anthropic-ai/sdk fully removed
@@ -49,7 +59,6 @@
 - [x] `components/chat/AIChat.tsx` - Chat UI with `useChat` hook
 - [x] `components/chat/AIMessageList.tsx` - Parts-based message rendering
 - [x] `components/chat/ProviderSelector.tsx` - Model selection UI
-- [x] `app/test-ai-chat/page.tsx` - Test page matching production UI
 - [x] 61 unit tests passing
 
 ### Current Chartsmith Features (Preserved)
@@ -68,6 +77,14 @@
 ---
 
 ## What Needs to be Built
+
+### PR1.7: Deeper System Integration (Deferred from PR1.6)
+
+| Task | Status | Priority |
+|------|--------|----------|
+| Centrifugo real-time file updates | 🔲 | Should |
+| Revision tracking for AI SDK changes | 🔲 | Should |
+| Plan workflow support | 🔲 | Should |
 
 ### PR2: Validation Agent (Days 4-6)
 
@@ -109,6 +126,19 @@
 - [x] ARCHITECTURE.md updated (Replicated requirement)
 - [x] @anthropic-ai/sdk fully removed
 
+### PR1.6 ✅ Complete
+- [x] Tools execute properly (no XML text output)
+- [x] Workspace creation from landing page works
+- [x] File explorer displays and updates (via refetch)
+- [x] Chat messages persist across refresh
+- [x] No CSS highlighting issues
+- [x] Both themes work correctly
+
+### PR1.7 (Pending)
+- [ ] Centrifugo integration for real-time updates
+- [ ] Revision tracking from AI SDK tool calls
+- [ ] Plan workflow support
+
 ### PR2 (Pending)
 - [ ] "Validate my chart" triggers validation tool
 - [ ] helm lint, helm template, kube-score all execute
@@ -116,14 +146,14 @@
 - [ ] AI explains issues in natural language
 - [ ] Fix suggestions provided for each issue
 - [ ] Live provider switching works without losing history
-- [ ] All PR1/PR1.5 functionality still works
+- [ ] All PR1/PR1.5/PR1.6 functionality still works
 - [ ] Path validation prevents traversal attacks
 
 ---
 
 ## Known Issues / Risks
 
-### Resolved Issues (PR1 + PR1.5)
+### Resolved Issues (PR1 + PR1.5 + PR1.6)
 
 | Issue | Resolution |
 |-------|------------|
@@ -133,6 +163,10 @@
 | Console noise in tests | Added console.error mock |
 | getWorkspace() bundling error | Changed to Go HTTP endpoint (documented deviation) |
 | Import cycle in Go handlers | Moved helpers to handlers/response.go |
+| **Tool execution outputs XML text** | **Simplified system prompt - let AI SDK handle tool schemas** |
+| **File explorer not updating** | **Workspace refetch after tool completion (Centrifugo in PR1.7)** |
+| **Chat not persisting** | **New AI SDK-specific actions bypassing Go intent** |
+| **White CSS highlighting** | **Removed prose classes, explicit code styling** |
 
 ### Remaining Risks (PR2)
 
@@ -151,12 +185,14 @@
 |----------|--------|----------|
 | PR1 Completion Report | ✅ Complete | `docs/PR1_COMPLETION_REPORT.md` |
 | PR1 Completion Addendum | ✅ Complete | `docs/PR1_COMPLETION_REPORT_ADDENDUM.md` |
-| **PR1.5 Completion Report** | ✅ Complete | `docs/PR1.5_COMPLETION_REPORT.md` |
-| **PR1.5 Implementation Audit** | ✅ Complete | `docs/PR1.5_IMPLEMENTATION_AUDIT.md` |
+| PR1.5 Completion Report | ✅ Complete | `docs/PR1.5_COMPLETION_REPORT.md` |
+| PR1.5 Implementation Audit | ✅ Complete | `docs/PR1.5_IMPLEMENTATION_AUDIT.md` |
+| **PR1.6 Completion Report** | ✅ Complete | `docs/PR1.6_COMPLETION_REPORT.md` |
 | Post-PR1.5 Integration Plan | ✅ Complete | `docs/POST_PR15_INTEGRATION_PLAN.md` |
 | PR1 Sub-Agent Prompt | ✅ Complete | `agent-prompts/PR1_SUB_AGENT.md` |
 | PR1.5 Sub-Agent Prompt | ✅ Complete | `agent-prompts/PR1.5_SUB_AGENT.md` |
-| **PR2 Sub-Agent Prompt** | ✅ Complete | `agent-prompts/PR2_SUB_AGENT.md` |
+| PR1.6 Sub-Agent Prompt | ✅ Complete | `agent-prompts/PR1.6_SUB_AGENT.md` |
+| PR2 Sub-Agent Prompt | ✅ Complete | `agent-prompts/PR2_SUB_AGENT.md` |
 | All PRDs | ✅ Complete | `PRDs/*.md` |
 | Memory Bank | ✅ Updated | `memory-bank/*` |
 
@@ -191,7 +227,8 @@ Time:        0.431 s
 |------|--------|
 | Dec 2, 2025 | Memory bank created with all PRDs analyzed |
 | Dec 4, 2025 | PR1 complete, memory bank updated |
-| Dec 4, 2025 | **PR1.5 complete**, all tests passing, memory bank updated |
+| Dec 4, 2025 | PR1.5 complete, all tests passing, memory bank updated |
+| Dec 4, 2025 | **PR1.6 complete**, feature parity achieved, memory bank updated |
 
 ---
 

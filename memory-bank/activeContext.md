@@ -6,9 +6,14 @@
 
 ## Current Phase
 
-**Status**: PR1.5 Complete → PR2 Ready to Begin
+**Status**: PR1.6 ISSUES IDENTIFIED → Fix Required Before PR1.7
 
-PR1 (AI SDK Foundation) and PR1.5 (Tool Integration & Go HTTP Server) have been successfully implemented. The new Vercel AI SDK chat system runs with 4 fully functional tools. Ready to begin PR2 (Validation Agent).
+PR1.6 (Feature Parity) infrastructure is complete, but **critical streaming issues** were discovered:
+- First message from entry point doesn't stream
+- Tool hallucination (AI uses fake XML instead of real tools)
+- Root cause identified: **stale `body` parameter in `useChat`**
+
+**Research complete**: See `docs/research/2025-12-04-PR1.6-AI-SDK-STREAMING-RESEARCH.md`
 
 ---
 
@@ -18,73 +23,77 @@ PR1 (AI SDK Foundation) and PR1.5 (Tool Integration & Go HTTP Server) have been 
 |----|------|----------|--------|
 | PR1 | AI SDK Foundation | Days 1-3 | ✅ **Complete** |
 | PR1.5 | Tool Integration & Go HTTP | Days 3-4 | ✅ **Complete** |
-| PR2 | Validation Agent | Days 4-6 | **Ready for Implementation** |
+| PR1.6 | Feature Parity | Day 5 | ✅ **Complete** |
+| PR1.7 | Deeper System Integration | TBD | **Ready for Implementation** |
+| PR2 | Validation Agent | Days 4-6 | Pending PR1.7 |
 
 ---
 
-## PR1.5 Completion Summary
+## PR1.6 Completion Summary
 
 ### What Was Built
 
 | Component | Description |
 |-----------|-------------|
-| `pkg/api/server.go` | Go HTTP server on port 8080 |
-| `pkg/api/errors.go` | Standardized error response utilities |
-| `pkg/api/handlers/response.go` | Handler-level error helpers |
-| `pkg/api/handlers/editor.go` | textEditor endpoint (view/create/str_replace) |
-| `pkg/api/handlers/versions.go` | Version lookup endpoints |
-| `pkg/api/handlers/context.go` | Chart context endpoint |
-| `lib/ai/tools/utils.ts` | `callGoEndpoint` HTTP utility |
-| `lib/ai/tools/getChartContext.ts` | Chart context tool |
-| `lib/ai/tools/textEditor.ts` | File operations tool |
-| `lib/ai/tools/latestSubchartVersion.ts` | ArtifactHub version lookup |
-| `lib/ai/tools/latestKubernetesVersion.ts` | K8s version tool |
-| `lib/ai/tools/index.ts` | Tool exports and factory |
-| `lib/ai/llmClient.ts` | Shared LLM client wrapper |
-| `lib/ai/prompts.ts` | System prompts with tool docs |
-| `lib/ai/__tests__/integration/tools.test.ts` | 22 integration tests |
+| `lib/ai/prompts.ts` | Simplified system prompt (removes tool docs competition) |
+| `app/test-ai-chat/page.tsx` | Landing page with workspace creation |
+| `app/test-ai-chat/[workspaceId]/page.tsx` | Server component for data fetching |
+| `app/test-ai-chat/[workspaceId]/client.tsx` | Client component with FileBrowser, persistence, CSS fixes |
+| `lib/workspace/actions/create-ai-sdk-chat-message.ts` | Server action for user message persistence |
+| `lib/workspace/actions/update-chat-message-response.ts` | Server action for AI response persistence |
 
 ### Key Implementation Details
 
-- **Go HTTP Server**: Port 8080 with 4 endpoints (context, editor, subchart, kubernetes)
-- **4 AI SDK Tools**: All registered in `/api/chat/route.ts`
-- **22 Integration Tests**: All passing
-- **@anthropic-ai/sdk**: Fully removed from package.json AND package-lock.json
+- **System Prompt Fix**: Removed verbose tool documentation that competed with AI SDK's automatic tool schema passing
+- **Server/Client Split**: Test page now follows server/client component pattern like main workspace
+- **Jotai Hydration**: Only `workspaceAtom` is set (derived atoms update automatically)
+- **File Explorer Updates**: Workspace refetch after tool completion (Centrifugo deferred to PR1.7)
+- **Chat Persistence**: New AI SDK-specific actions that bypass Go intent processing
+- **CSS Fix**: Removed prose classes, added explicit theme-aware code styling
 
-### Documented Deviations from PRD
+### Documented Deferrals (PR1.7)
 
-1. **getChartContext calls Go** (not TypeScript-only) - Due to Next.js bundling errors with `pg` module
-2. **4 Go endpoints** (not 3) - Added `/api/tools/context` for getChartContext
-3. **auth.go skipped** - Existing Next.js middleware handles authentication
+1. **Revision tracking** - Creating revisions from AI SDK tool calls requires batching design
+2. **Centrifugo integration** - Real-time file updates will replace refetch pattern
+3. **Plan workflow** - Multi-file Plans from AI SDK require Go integration
 
-### PR1.5 Completion Reports
+### PR1.6 Completion Report
 
-- `docs/PR1.5_COMPLETION_REPORT.md` - Full implementation details
-- `docs/PR1.5_IMPLEMENTATION_AUDIT.md` - Task-by-task PRD verification
+- `docs/PR1.6_COMPLETION_REPORT.md` - Full implementation details
 
 ---
 
-## Current Work Focus: PR2 Implementation
+## Current Work Focus: PR1.6 Hotfix
 
-### Immediate Priority: Validation Agent
+### BLOCKER: AI SDK Body Parameter Issue
 
-**Go Work**:
-1. Create `pkg/validation/pipeline.go` (orchestration)
-2. Create `pkg/validation/helm.go` (helm lint/template)
-3. Create `pkg/validation/kubescore.go` (kube-score integration)
-4. Create `pkg/validation/parser.go` (output parsing)
-5. Create `pkg/validation/types.go` (type definitions)
-6. Create `pkg/api/handlers/validate.go` (validation endpoint)
+**Root Cause**: The `body` parameter in `useChat` is captured at initialization and becomes stale. When first message fires, `workspaceId` may be undefined, causing tools not to be created on the server.
 
-**TypeScript Work**:
-1. Create `lib/ai/tools/validateChart.ts` (validation tool)
-2. Create `components/chat/ValidationResults.tsx` (result display)
-3. Create `components/chat/LiveProviderSwitcher.tsx` (provider switching)
-4. Register validateChart tool in `/api/chat/route.ts`
+### Required Fix
 
-### Sub-Agent Prompt
+**File**: `chartsmith-app/app/test-ai-chat/[workspaceId]/client.tsx`
 
-Ready at: `agent-prompts/PR2_SUB_AGENT.md` ✅
+1. Remove `body` from `useChat` config
+2. Pass body in each `sendMessage()` call as second argument:
+```typescript
+sendMessage(
+  { text: prompt },
+  { body: { workspaceId: workspace.id, revisionNumber, provider, model } }
+);
+```
+
+### Issues Addressed by Fix
+- Issue #1: No streaming on first message
+- Issue #2: Tool hallucination (wrong answers)
+- Issue #5: First message vs subsequent behavior
+
+### Remaining Issues (After Fix)
+- Issue #4: Conversation order reversal - needs separate investigation
+
+### Sub-Agent Prompts
+
+- PR1.7 ready at: `agent-prompts/PR1.6_SUB_AGENT.md` (contains PR1.7 readiness notes)
+- PR2 ready at: `agent-prompts/PR2_SUB_AGENT.md`
 
 ---
 
@@ -98,6 +107,8 @@ Ready at: `agent-prompts/PR2_SUB_AGENT.md` ✅
 | Go communication | HTTP endpoints (port 8080) | Synchronous tool execution |
 | Tool → Go pattern | All 4 tools call Go | Consistent architecture, avoids bundling issues |
 | Default model | Claude Sonnet 4 | Anthropic's recommended model |
+| System prompt style | Minimal, behavior-focused | Let AI SDK provide tool schemas |
+| Chat persistence | AI SDK-specific actions | Bypass Go intent processing |
 
 ---
 
@@ -125,34 +136,51 @@ GO_BACKEND_URL=http://localhost:8080
 
 ## Blocking Dependencies
 
+### PR1.7 Dependencies
+- [x] PR1 complete
+- [x] PR1.5 complete
+- [x] PR1.6 complete
+
 ### PR2 Dependencies
 - [x] PR1 complete
 - [x] PR1.5 complete
+- [x] PR1.6 complete (optional but recommended)
 - [ ] helm CLI (v3.x) installed
 - [ ] kube-score CLI (v1.16+) installed
 
 ---
 
-## Test Results (PR1.5)
+## Next Actions
 
-```
-Integration Tests: 22 passed
-Unit Tests: 61 passed (7 suites)
-Go Build: ✅ Success
-All Go endpoints: ✅ Verified via curl
-```
+### IMMEDIATE: PR1.6 Hotfix
+1. Apply request-level body fix to `client.tsx`
+2. Test first message flow (redirect from landing page)
+3. Verify tools execute correctly (ask for subchart version)
+4. Investigate Issue #4 (conversation order) separately
 
----
+### After Hotfix: PR1.7
+1. Read `PRDs/PR1.7_Product_PRD.md` and `PRDs/PR1.7_Tech_PRD.md`
+2. Design revision batching strategy for AI SDK tool calls
+3. Integrate Centrifugo for real-time file updates
+4. Implement Plan workflow support
 
-## Next Actions (PR2 Start)
-
+### For PR2:
 1. Read `PRDs/PR2_Product_PRD.md` and `PRDs/PR2_Tech_PRD.md`
-2. Create `agent-prompts/PR2_SUB_AGENT.md`
-3. Verify helm and kube-score CLI tools are installed
-4. Create `pkg/validation/` package structure
-5. Create validation endpoint in Go
-6. Create validateChart tool in TypeScript
+2. Verify helm and kube-score CLI tools are installed
+3. Create `pkg/validation/` package structure
+4. Create validation endpoint in Go
+5. Create validateChart tool in TypeScript
 
 ---
 
-*This document is the starting point for each work session. Last updated: Dec 4, 2025 (PR1.5 complete)*
+## Research Documents
+
+| Document | Purpose |
+|----------|---------|
+| `docs/issues/PR1.6_POST_IMPLEMENTATION_ISSUES.md` | Issue tracking with root cause |
+| `docs/research/2025-12-04-PR1.6-AI-SDK-STREAMING-RESEARCH.md` | Full research findings |
+| `docs/PR1.6_COMPLETION_REPORT.md` | What was built in PR1.6 |
+
+---
+
+*This document is the starting point for each work session. Last updated: Dec 4, 2025 (PR1.6 issues identified, fix documented)*
