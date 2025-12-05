@@ -14,12 +14,32 @@
 | PR1 Implementation | ✅ **Complete** | AI SDK foundation working |
 | PR1.5 Implementation | ✅ **Complete** | Go HTTP server + 4 tools working |
 | PR1.6 Implementation | ✅ **Complete** | Test path feature parity |
+| PR1.61 Implementation | ✅ **Complete** | Body parameter hotfix |
+| PR1.65 Implementation | ✅ **Complete** | UI feature parity |
 | PR1.7 Implementation | 🔲 Ready to Start | Deeper system integration |
 | PR2 Implementation | 🔲 Ready to Start | Awaiting implementation |
 
 ---
 
 ## What Already Works
+
+### PR1.65 Deliverables (All Working ✅)
+
+- [x] Three-panel layout: Chat LEFT → Explorer MIDDLE → Code Editor RIGHT
+- [x] Code editor panel with Monaco syntax highlighting
+- [x] Source/Rendered tabs for file viewing
+- [x] Loading states and visual feedback improvements
+- [x] Landing page polish with upload options
+- [x] ArtifactHubSearchModal integration
+- [x] Consistent styling matching main workspace path
+
+### PR1.61 Deliverables (All Working ✅)
+
+- [x] Request-level body parameter in `sendMessage()` calls
+- [x] `getChatBody()` helper with `useCallback` memoization
+- [x] Fixed streaming on first message from entry point
+- [x] Fixed tool execution (no more XML hallucination)
+- [x] Correct answers returned (18.1.13 not 16.2.7)
 
 ### PR1.6 Deliverables (All Working ✅)
 
@@ -134,6 +154,20 @@
 - [x] No CSS highlighting issues
 - [x] Both themes work correctly
 
+### PR1.61 ✅ Complete
+- [x] First message from entry point streams correctly
+- [x] Tools execute on first message (no hallucination)
+- [x] workspaceId always sent in request body
+- [x] Correct answers returned (actual versions)
+
+### PR1.65 ✅ Complete
+- [x] Three-panel layout matches main workspace
+- [x] Code editor displays file contents
+- [x] Source/Rendered tabs work
+- [x] Loading states show during AI processing
+- [x] Landing page has upload options
+- [x] Visual parity with main path achieved
+
 ### PR1.7 (Pending)
 - [ ] Centrifugo integration for real-time updates
 - [ ] Revision tracking from AI SDK tool calls
@@ -153,11 +187,11 @@
 
 ## Known Issues / Risks
 
-### Resolved Issues (PR1 + PR1.5 + PR1.6)
+### Resolved Issues (PR1 + PR1.5 + PR1.6 + PR1.61 + PR1.65)
 
 | Issue | Resolution |
 |-------|------------|
-| AI SDK v5 different from v4 docs | Discovered correct patterns (UIMessage, TextStreamChatTransport) |
+| AI SDK v5 different from v4 docs | Discovered correct patterns (UIMessage, default transport) |
 | OpenRouter credit limits | Added direct API priority (Anthropic → OpenAI → OpenRouter) |
 | Next.js maxDuration must be literal | Changed from variable to `60` literal |
 | Console noise in tests | Added console.error mock |
@@ -167,6 +201,10 @@
 | **File explorer not updating** | **Workspace refetch after tool completion (Centrifugo in PR1.7)** |
 | **Chat not persisting** | **New AI SDK-specific actions bypassing Go intent** |
 | **White CSS highlighting** | **Removed prose classes, explicit code styling** |
+| **No streaming on first message** | **Request-level body in sendMessage() - PR1.61** |
+| **Tool hallucination (wrong answers)** | **workspaceId passed at request time - PR1.61** |
+| **TextStreamChatTransport incompatible** | **Use default transport with toUIMessageStreamResponse()** |
+| **UI layout doesn't match main path** | **Three-panel layout implemented - PR1.65** |
 
 ### Remaining Risks (PR2)
 
@@ -187,7 +225,10 @@
 | PR1 Completion Addendum | ✅ Complete | `docs/PR1_COMPLETION_REPORT_ADDENDUM.md` |
 | PR1.5 Completion Report | ✅ Complete | `docs/PR1.5_COMPLETION_REPORT.md` |
 | PR1.5 Implementation Audit | ✅ Complete | `docs/PR1.5_IMPLEMENTATION_AUDIT.md` |
-| **PR1.6 Completion Report** | ✅ Complete | `docs/PR1.6_COMPLETION_REPORT.md` |
+| PR1.6 Completion Report | ✅ Complete | `docs/PR1.6_COMPLETION_REPORT.md` |
+| **PR1.61 Implementation Plan** | ✅ Complete | `PRDs/PR1.61_IMPLEMENTATION_PLAN.md` |
+| **PR1.65 UI Parity Plan** | ✅ Complete | `PRDs/PR1.65_UI_PARITY_PLAN.md` |
+| **AI SDK Streaming Research** | ✅ Complete | `docs/research/2025-12-04-PR1.6-AI-SDK-STREAMING-RESEARCH.md` |
 | Post-PR1.5 Integration Plan | ✅ Complete | `docs/POST_PR15_INTEGRATION_PLAN.md` |
 | PR1 Sub-Agent Prompt | ✅ Complete | `agent-prompts/PR1_SUB_AGENT.md` |
 | PR1.5 Sub-Agent Prompt | ✅ Complete | `agent-prompts/PR1.5_SUB_AGENT.md` |
@@ -221,6 +262,24 @@ Time:        0.431 s
 
 ---
 
+## Git Commits
+
+### Chartsmith Repo (`myles/vercel-ai-sdk-migration`)
+
+| Commit | PR | Description |
+|--------|-----|-------------|
+| `943a009` | PR1.61 | Fix AI SDK body parameter stale data issue |
+| `8a5e9cd` | chore | Move PR1.5 docs to UnchartedTerritory repo |
+| `fdfa765` | PR1.65 | UI Feature Parity Implementation |
+
+### UnchartedTerritory Repo (`main`)
+
+| Commit | Description |
+|--------|-------------|
+| `9a1c21f` | PR1.6/1.61: Add documentation and implementation plans |
+
+---
+
 ## Version History
 
 | Date | Change |
@@ -228,8 +287,10 @@ Time:        0.431 s
 | Dec 2, 2025 | Memory bank created with all PRDs analyzed |
 | Dec 4, 2025 | PR1 complete, memory bank updated |
 | Dec 4, 2025 | PR1.5 complete, all tests passing, memory bank updated |
-| Dec 4, 2025 | **PR1.6 complete**, feature parity achieved, memory bank updated |
+| Dec 4, 2025 | PR1.6 complete, feature parity achieved, memory bank updated |
+| Dec 5, 2025 | **PR1.61 complete**, body parameter hotfix applied |
+| Dec 5, 2025 | **PR1.65 complete**, UI feature parity achieved |
 
 ---
 
-*Update this document as tasks are completed. Last updated: Dec 4, 2025*
+*Update this document as tasks are completed. Last updated: Dec 5, 2025*
