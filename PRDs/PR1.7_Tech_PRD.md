@@ -1,10 +1,79 @@
 # PR1.7: Deep System Integration - Technical Specification
 
-**Version**: 1.0
+**Version**: 1.1
 **PR**: PR1.7 (System Integration)
-**Prerequisite**: PR1.6 merged
-**Status**: Preliminary (Architectural Focus)
-**Last Updated**: December 4, 2025
+**Prerequisite**: PR1.6 merged + Pre-PR1.7 Bug Fixes
+**Status**: Updated with Post-PR1.6 Analysis
+**Last Updated**: December 5, 2025
+
+---
+
+## ⚠️ BLOCKING BUGS - Must Fix Before PR1.7
+
+The following bugs were discovered post-PR1.6 and must be fixed **before** starting PR1.7:
+
+### Bug 1: Double Processing (Go + AI SDK Both Running)
+
+**Severity**: P0 - Critical
+
+**Root Cause**: `createWorkspaceFromPromptAction()` creates a chat message via `createChatMessage()` which calls `enqueueWork("new_intent")` because no `knownIntent` is passed. This triggers the Go worker. Then the test-ai-chat page auto-sends the same prompt to AI SDK, causing both systems to process the message simultaneously.
+
+**Evidence**:
+```
+INFO    New plan notification received
+INFO    Creating initial plan  prompt=Create a simple nginx deployment
+```
+
+Both Go and AI SDK race to create files, causing duplicate/conflicting changes.
+
+**Fix Options**:
+
+**Option A (Recommended)**: Pass `knownIntent: ChatMessageIntent.NON_PLAN` in `createWorkspaceFromPromptAction`:
+```typescript
+// lib/workspace/actions/create-workspace-from-prompt.ts
+const createChartMessageParams: CreateChatMessageParams = {
+  prompt: prompt,
+  messageFromPersona: ChatMessageFromPersona.AUTO,
+  knownIntent: ChatMessageIntent.NON_PLAN,  // ADD THIS - skips Go processing
+}
+```
+
+**Option B**: Create a separate `createWorkspaceForAISDKAction` that doesn't create a chat message at all, letting the test-ai-chat page handle it.
+
+**Files to Modify**:
+- `lib/workspace/actions/create-workspace-from-prompt.ts`
+
+---
+
+### Bug 2: Files Created by Go Don't Appear in UI
+
+**Severity**: P1 - High
+
+**Root Cause**: When Bug 1 occurs, Go worker creates files but:
+1. No Centrifugo events are published from the textEditor Go handler
+2. Test-ai-chat only refetches after **AI SDK** tool completion, not Go tool completion
+3. The Go-created files exist in DB but UI doesn't know about them
+
+**This bug is mitigated by fixing Bug 1** - if Go doesn't process, it won't create files.
+
+**PR1.7's Centrifugo integration will fully fix this** for cases where Go endpoints modify files.
+
+---
+
+### Non-Bug: Page Reload Re-triggers LLM (Low Risk)
+
+**Severity**: Low - Existing guard is mostly sufficient
+
+**Analysis**: The auto-send useEffect already checks `!lastUserMessage.response` before sending:
+```typescript
+const needsResponse = lastUserMessage && !lastUserMessage.response && lastUserMessage.prompt;
+```
+
+This means page reload will only re-trigger AI SDK if the response wasn't persisted. The `updateChatMessageResponseAction` persists responses when `status === "ready"`, so this is only an issue if:
+1. User reloads during streaming (response not yet ready)
+2. There was an error persisting the response
+
+**Recommendation**: Monitor but don't prioritize fixing unless real user impact is observed.
 
 ---
 
@@ -83,6 +152,22 @@ The AI SDK `textEditor` tool modifies files directly via the Go HTTP endpoint. T
 - No history of AI changes
 - No ability to rollback AI modifications
 - No visibility into what changed
+
+### ⚠️ Critical Finding: Inconsistent Content Handling
+
+**The PR1.7 plan assumes all AI changes go to `content_pending`, but this is NOT true:**
+
+| Command | Writes To | File |
+|---------|-----------|------|
+| `create` | `content` (directly) | `pkg/workspace/chart.go:47` via `AddFileToChart()` |
+| `str_replace` | `content_pending` | `pkg/workspace/file.go:140` via `SetFileContentPending()` |
+
+**Impact**: The `createRevisionFromPendingAction()` sketch uses `COALESCE(content_pending, content)` which works for `str_replace` but newly created files via `create` command have `content` populated directly - they won't appear as "pending changes".
+
+**Required Fix Before PR1.7**: Either:
+1. **Option A (Recommended)**: Modify `AddFileToChart()` to write to `content_pending` instead of `content`
+2. **Option B**: Create a new `AddFileToChartPending()` function for AI SDK path
+3. **Option C**: Accept that `create` is always committed immediately (breaks user expectation)
 
 ### Existing Pattern Study
 
@@ -279,6 +364,26 @@ export async function createRevisionFromPendingAction(
 - Add "Commit Changes" and "Discard Changes" buttons
 - Show diff view for pending changes
 
+### ✅ Key Finding: Accept/Reject Functions Already Exist
+
+**No need to create commit/discard from scratch.** The functions already exist:
+
+**Accept (Commit)**:
+- `lib/workspace/patch.ts:126-150` - `acceptPatch()`
+- `lib/workspace/actions/accept-patch.ts:10-45` - `acceptPatchAction()`
+- Sets `content = content_pending, content_pending = NULL`
+
+**Reject (Discard)**:
+- `lib/workspace/patch.ts:76-96` - `rejectPatch()`
+- `lib/workspace/actions/reject-patch.ts:9-22` - `rejectPatchAction()`
+- Sets `content_pending = NULL`
+
+**Batch Operations**:
+- `acceptAllPatches()` - Commits all pending changes
+- `rejectAllPatches()` - Discards all pending changes
+
+**For PR1.7**: Just add UI buttons that call these existing actions, then create the revision.
+
 ---
 
 ## Feature 2: Centrifugo Real-Time Integration
@@ -293,6 +398,39 @@ The main path uses Centrifugo WebSocket for real-time updates:
 
 The test path uses AI SDK streaming directly. When AI modifies files, the file explorer doesn't update in real-time.
 
+### ✅ Key Finding: ArtifactUpdatedEvent is Defined but Never Published
+
+**Good news**: The frontend handler for `artifact-updated` already exists and works correctly (`hooks/useCentrifugo.ts:164-264`).
+
+**Bad news**: No Go code actually publishes this event:
+- `ArtifactUpdatedEvent` type is defined at `pkg/realtime/types/artifact-updated.go:9-24`
+- The textEditor handler (`pkg/api/handlers/editor.go`) does NOT call `realtime.SendEvent()`
+- The `SetFileContentPending()` function does NOT publish events
+
+**PR1.7 implementation is correct** - just needs to add the actual publishing code.
+
+### Current Test-AI-Chat Workaround
+
+Test-ai-chat currently uses a **refetch-after-tool-completion** approach (`client.tsx:153-169`):
+
+```typescript
+useEffect(() => {
+  const lastMessage = messages[messages.length - 1];
+  const hasToolResult = lastMessage?.parts?.some(
+    (p: { type: string; state?: string }) =>
+      p.type.startsWith('tool-') && p.state === 'result'
+  );
+
+  if (hasToolResult && status === 'ready') {
+    getWorkspaceAction(session, workspace.id).then((updated) => {
+      if (updated) setWorkspace(updated);
+    });
+  }
+}, [messages, status, session, workspace.id, setWorkspace]);
+```
+
+**This should be removed** after Centrifugo integration to avoid duplicate updates.
+
 ### Existing Pattern Study
 
 **File**: `hooks/useCentrifugo.ts`
@@ -300,7 +438,7 @@ The test path uses AI SDK streaming directly. When AI modifies files, the file e
 Event types handled:
 - `chatmessage-updated` - Chat streaming
 - `revision-created` - Refresh workspace after revision
-- `artifact-updated` - File changes
+- `artifact-updated` - File changes (handler exists, never triggered)
 - `plan-updated` - Plan progress
 - `render-stream` - Render results
 - `conversion-file` - Conversion updates
@@ -387,31 +525,49 @@ Use AI SDK's tool result to trigger client-side update.
 
 ### Implementation Sketch
 
-**Go Changes**:
+**Go Changes** (detailed):
 ```go
 // pkg/api/handlers/editor.go
-import "chartsmith/pkg/realtime"
+import (
+    "chartsmith/pkg/realtime"
+    realtimetypes "chartsmith/pkg/realtime/types"
+    "chartsmith/pkg/workspace"
+)
 
 func TextEditor(w http.ResponseWriter, r *http.Request) {
     // ... existing implementation ...
 
-    // After successful file operation
+    // After successful str_replace (line ~245)
+    // Or after successful create (line ~156)
     if success {
-        // Extract userID from auth header (already validated)
-        userID := r.Context().Value("userID").(string)
-
-        // Publish artifact update
-        realtime.PublishArtifactUpdated(ctx, req.WorkspaceID, userID, &realtime.ArtifactUpdate{
-            ID:              file.ID,
-            RevisionNumber:  file.RevisionNumber,
-            FilePath:        file.FilePath,
-            Content:         file.Content,
-            ContentPending:  file.ContentPending,
-            ChartID:         file.ChartID,
-        })
+        // Get all users for this workspace (same pattern as apply-plan.go:78-85)
+        userIDs, err := workspace.ListUserIDsForWorkspace(ctx, req.WorkspaceID)
+        if err != nil {
+            // Log but don't fail the request
+            log.Error("Failed to get user IDs for realtime", "error", err)
+        } else {
+            recipient := realtimetypes.Recipient{UserIDs: userIDs}
+            event := &realtimetypes.ArtifactUpdatedEvent{
+                WorkspaceID: req.WorkspaceID,
+                WorkspaceFile: &workspacetypes.File{
+                    ID:             fileID,
+                    RevisionNumber: req.RevisionNumber,
+                    ChartID:        chartID,
+                    WorkspaceID:    req.WorkspaceID,
+                    FilePath:       req.Path,
+                    Content:        content,
+                    ContentPending: contentPending,
+                },
+            }
+            if err := realtime.SendEvent(ctx, recipient, event); err != nil {
+                log.Error("Failed to send artifact update", "error", err)
+            }
+        }
     }
 }
 ```
+
+**Note**: Use `ListUserIDsForWorkspace()` pattern (not extracting single userID from auth) to ensure all users with workspace access receive the update.
 
 **TypeScript Changes**:
 ```typescript
@@ -424,7 +580,8 @@ export function TestAIChatClient({ workspace, session }) {
   // Add Centrifugo integration
   const { isReconnecting } = useCentrifugo({ session });
 
-  // File explorer now updates automatically via atom changes
+  // REMOVE the refetch-after-tool-completion useEffect (lines 153-169)
+  // File explorer now updates automatically via workspaceAtom changes from Centrifugo
 }
 ```
 
@@ -621,20 +778,27 @@ export function PlanProposalCard({ proposal, onApply, onDiscard }) {
 
 ## Open Questions for Implementation
 
+### Pre-PR1.7 Bug Fixes (Must Decide)
+1. **Double processing fix**: Option A (add `knownIntent`) vs Option B (separate action)?
+2. **Content handling fix**: Option A (modify `AddFileToChart`) vs Option B (new function) vs Option C (accept inconsistency)?
+
 ### Revision Tracking
 1. Should "Commit Changes" auto-trigger on conversation end?
-2. How to handle uncommitted changes when user navigates away?
+2. How to handle uncommitted changes when user navigates away? (Browser `beforeunload` warning?)
 3. Should there be a maximum pending changes limit?
+4. **ANSWERED**: Use existing `acceptAllPatches()` + new revision creation
 
 ### Centrifugo Integration
-1. Should Go endpoints require userID in request body or extract from auth?
+1. ~~Should Go endpoints require userID in request body or extract from auth?~~ **ANSWERED**: Use `ListUserIDsForWorkspace()` pattern
 2. Rate limiting for high-frequency tool calls?
 3. Batch file updates into single Centrifugo event?
+4. **NEW**: Should we keep refetch-after-tool-completion as fallback for disconnection?
 
 ### Plan Workflow
 1. Should Plans persist to database even from AI SDK?
 2. How to handle mixed mode (some direct, some planned)?
 3. Should AI auto-detect when planning is appropriate?
+4. **NEW**: Should we reuse `PlanChatMessage.tsx` or create new `PlanProposalCard`?
 
 ---
 

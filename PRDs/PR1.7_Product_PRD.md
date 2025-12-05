@@ -1,10 +1,36 @@
 # PR1.7: Deep System Integration - Product Requirements Document
 
-**Version**: 1.0
+**Version**: 1.1
 **PR**: PR1.7 (System Integration)
-**Prerequisite**: PR1.6 merged
-**Status**: Preliminary (Architectural Focus)
-**Last Updated**: December 4, 2025
+**Prerequisite**: PR1.6 merged + Pre-PR1.7 Bug Fixes
+**Status**: Updated with Post-PR1.6 Analysis
+**Last Updated**: December 5, 2025
+
+---
+
+## ⚠️ BLOCKING BUGS - Must Fix Before PR1.7
+
+Two critical bugs were discovered post-PR1.6 that must be fixed before starting PR1.7:
+
+### Bug 1: Double Processing (P0 - Critical)
+
+**User Impact**: When user creates a workspace from the test-ai-chat landing page, both Go worker AND AI SDK process the prompt simultaneously, causing duplicate/conflicting file creation.
+
+**Root Cause**: `createWorkspaceFromPromptAction()` triggers Go worker processing, then test-ai-chat auto-sends to AI SDK.
+
+**Recommended Fix**: Pass `knownIntent: ChatMessageIntent.NON_PLAN` to skip Go worker processing.
+
+### Bug 2: Inconsistent Content Handling (P1 - High)
+
+**User Impact**: Files created via AI (`create` command) appear committed immediately, while files modified via AI (`str_replace`) appear as pending. This breaks user expectation that all AI changes are pending until committed.
+
+**Root Cause**:
+- `create` command writes to `content` directly
+- `str_replace` command writes to `content_pending`
+
+**Recommended Fix**: Modify `AddFileToChart()` to write to `content_pending` instead of `content`.
+
+**See**: `PR1.7_Tech_PRD.md` for detailed analysis and fix options.
 
 ---
 
@@ -32,19 +58,29 @@ PR1.7 delivers:
 
 ## Problem Statement
 
-### Current State (After PR1.6)
+### Current State (After PR1.6/1.61/1.65)
 
 The test path has feature parity for basic operations but lacks deeper system integration:
 
-| Feature | Main Path | Test Path (PR1.6) | Gap |
+| Feature | Main Path | Test Path (PR1.6x) | Gap |
 |---------|-----------|-------------------|-----|
 | Tool execution | ✅ | ✅ | Parity |
 | Workspace creation | ✅ | ✅ | Parity |
-| File explorer | ✅ | ✅ | Parity |
-| Chat persistence | ✅ | ✅ | Parity |
+| 3-panel layout | ✅ | ✅ | Parity (PR1.65) |
+| Code editor | ✅ | ✅ | Parity (PR1.65) |
+| Chat persistence | ✅ | ✅ | Parity (PR1.6) |
+| useChat body params | ✅ | ✅ | Fixed (PR1.61) |
+| File explorer updates | ✅ (real-time) | ⚠️ (refetch) | **Partial** |
 | **Revision tracking** | ✅ | ❌ | **Missing** |
 | **Real-time updates** | ✅ | ❌ | **Missing** |
+| **Pending changes UI** | ✅ | ❌ | **Missing** |
 | **Plan review** | ✅ | ❌ | **Missing** |
+
+### Key Findings from Post-PR1.6 Analysis
+
+1. **Centrifugo `artifact-updated` handler exists** but event is never published from Go
+2. **Accept/reject patch functions already exist** - can reuse for commit/discard
+3. **Current workaround**: Test-ai-chat refetches workspace after AI SDK tool completion
 
 ### Pain Points
 

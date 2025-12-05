@@ -6,9 +6,12 @@
 
 ## Current Phase
 
-**Status**: PR1.6 + PR1.61 + PR1.65 ✅ COMPLETE → Ready for PR1.7
+**Status**: PR1.7 Prereq Fixes ✅ COMPLETE → Ready for PR1.7 Implementation
 
-All feature parity and UI parity work is complete. The test-ai-chat path now matches the main workspace path in functionality and appearance.
+All prerequisite bug fixes for PR1.7 are complete. The AI SDK path now correctly:
+- Prevents double processing (Go worker doesn't process AI SDK prompts)
+- Writes new files to `content_pending` column (not `content`)
+- Uses correct revision number (0 for new workspaces, not 1)
 
 ---
 
@@ -21,6 +24,7 @@ All feature parity and UI parity work is complete. The test-ai-chat path now mat
 | PR1.6 | Feature Parity | Day 5 | ✅ **Complete** |
 | PR1.61 | Body Parameter Hotfix | Day 5 | ✅ **Complete** |
 | PR1.65 | UI Feature Parity | Day 5 | ✅ **Complete** |
+| PR1.7 Prereq | Bug Fixes for PR1.7 | Day 5 | ✅ **Complete** |
 | PR1.7 | Deeper System Integration | TBD | **Ready for Implementation** |
 | PR2 | Validation Agent | Days 4-6 | Pending PR1.7 |
 
@@ -66,6 +70,19 @@ All feature parity and UI parity work is complete. The test-ai-chat path now mat
 | Landing page polish with upload options | ✅ |
 | ArtifactHubSearchModal integration | ✅ |
 | Consistent styling matching main workspace | ✅ |
+
+### PR1.7 Prereq Fixes ✅
+
+| Fix | Description | Files Changed |
+|-----|-------------|---------------|
+| Double Processing Bug | Added `ChatMessageIntent.NON_PLAN` to prevent Go worker from processing AI SDK prompts | `create-workspace-from-prompt.ts` |
+| Content Column Bug | Created `AddFileToChartPending()` to write new files to `content_pending` | `chart.go`, `editor.go` |
+| Revision Number Bug | Changed `\|\| 1` to `?? 0` to handle revision 0 correctly | `client.tsx`, `route.ts` |
+| System Prompt Enhancement | Updated to match Go backend and enforce tool usage | `prompts.ts` |
+
+**Known remaining issues (to be fixed in PR1.7):**
+- Files created via AI SDK don't appear in UI (need Centrifugo events + pending UI)
+- Chat history not persisted on refresh (need improved persistence)
 
 ---
 
@@ -172,4 +189,4 @@ GO_BACKEND_URL=http://localhost:8080
 
 ---
 
-*This document is the starting point for each work session. Last updated: Dec 5, 2025 (PR1.6, PR1.61, PR1.65 all complete)*
+*This document is the starting point for each work session. Last updated: Dec 5, 2025 (PR1.7 prereq fixes complete)*

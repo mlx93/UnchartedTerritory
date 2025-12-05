@@ -16,6 +16,7 @@
 | PR1.6 Implementation | ✅ **Complete** | Test path feature parity |
 | PR1.61 Implementation | ✅ **Complete** | Body parameter hotfix |
 | PR1.65 Implementation | ✅ **Complete** | UI feature parity |
+| PR1.7 Prereq Fixes | ✅ **Complete** | Bug fixes before PR1.7 |
 | PR1.7 Implementation | 🔲 Ready to Start | Deeper system integration |
 | PR2 Implementation | 🔲 Ready to Start | Awaiting implementation |
 
@@ -168,6 +169,14 @@
 - [x] Landing page has upload options
 - [x] Visual parity with main path achieved
 
+### PR1.7 Prereq Fixes ✅ Complete
+- [x] **Bug 1 Fixed**: Double processing prevented - `ChatMessageIntent.NON_PLAN` added to `createWorkspaceFromPromptAction`
+- [x] **Bug 2 Fixed**: `AddFileToChartPending()` function created - AI SDK file creates go to `content_pending`
+- [x] **Bug 3 Fixed**: Revision number bugs - changed `|| 1` to `?? 0` in `client.tsx` and `route.ts`
+- [x] **Enhancement**: System prompt updated in `prompts.ts` to match Go backend and enforce tool usage
+- [ ] Deferred: `str_replace` testing (to post-PR1.7)
+- [ ] Deferred: K8s conversion path testing (to post-PR1.7)
+
 ### PR1.7 (Pending)
 - [ ] Centrifugo integration for real-time updates
 - [ ] Revision tracking from AI SDK tool calls
@@ -205,6 +214,9 @@
 | **Tool hallucination (wrong answers)** | **workspaceId passed at request time - PR1.61** |
 | **TextStreamChatTransport incompatible** | **Use default transport with toUIMessageStreamResponse()** |
 | **UI layout doesn't match main path** | **Three-panel layout implemented - PR1.65** |
+| **Double processing (Go + AI SDK)** | **ChatMessageIntent.NON_PLAN added - PR1.7 prereq** |
+| **File create goes to wrong column** | **AddFileToChartPending() writes to content_pending - PR1.7 prereq** |
+| **Revision number always 1** | **Changed || 1 to ?? 0 - PR1.7 prereq** |
 
 ### Remaining Risks (PR2)
 
@@ -290,6 +302,7 @@ Time:        0.431 s
 | Dec 4, 2025 | PR1.6 complete, feature parity achieved, memory bank updated |
 | Dec 5, 2025 | **PR1.61 complete**, body parameter hotfix applied |
 | Dec 5, 2025 | **PR1.65 complete**, UI feature parity achieved |
+| Dec 5, 2025 | **PR1.7 prereq fixes complete**, double processing + content_pending + revision bugs fixed |
 
 ---
 
