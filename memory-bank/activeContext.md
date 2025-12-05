@@ -6,12 +6,13 @@
 
 ## Current Phase
 
-**Status**: PR1.7 Prereq Fixes ✅ COMPLETE → Ready for PR1.7 Implementation
+**Status**: PR1.7 Implementation ✅ COMPLETE
 
-All prerequisite bug fixes for PR1.7 are complete. The AI SDK path now correctly:
-- Prevents double processing (Go worker doesn't process AI SDK prompts)
-- Writes new files to `content_pending` column (not `content`)
-- Uses correct revision number (0 for new workspaces, not 1)
+PR1.7 has been fully implemented. The AI SDK path now has:
+- Real-time file updates via Centrifugo integration
+- Pending changes UI indicators (yellow dots in file tree)
+- Commit/Discard functionality for revision management
+- Files properly display in Explorer for revision 0
 
 ---
 
@@ -25,72 +26,81 @@ All prerequisite bug fixes for PR1.7 are complete. The AI SDK path now correctly
 | PR1.61 | Body Parameter Hotfix | Day 5 | ✅ **Complete** |
 | PR1.65 | UI Feature Parity | Day 5 | ✅ **Complete** |
 | PR1.7 Prereq | Bug Fixes for PR1.7 | Day 5 | ✅ **Complete** |
-| PR1.7 | Deeper System Integration | TBD | **Ready for Implementation** |
-| PR2 | Validation Agent | Days 4-6 | Pending PR1.7 |
+| PR1.7 | Deeper System Integration | Day 6 | ✅ **Complete** |
+| PR2 | Validation Agent | Days 7-9 | **Ready for Implementation** |
 
 ---
 
 ## Completed Work Summary
 
-### PR1.6: Feature Parity ✅
+### PR1.7: Deeper System Integration ✅
+
+#### Feature 1: Centrifugo Integration (Real-time File Updates)
 
 | Component | Description |
 |-----------|-------------|
-| `lib/ai/prompts.ts` | Simplified system prompt (removes tool docs competition) |
-| `app/test-ai-chat/page.tsx` | Landing page with workspace creation |
-| `app/test-ai-chat/[workspaceId]/page.tsx` | Server component for data fetching |
-| `app/test-ai-chat/[workspaceId]/client.tsx` | Client component with FileBrowser, persistence, CSS fixes |
-| `lib/workspace/actions/create-ai-sdk-chat-message.ts` | Server action for user message persistence |
-| `lib/workspace/actions/update-chat-message-response.ts` | Server action for AI response persistence |
+| `pkg/workspace/chart.go` | Modified `AddFileToChartPending()` to return `(string, error)` exposing the generated fileID |
+| `pkg/workspace/file.go` | Added `GetFileIDByPath()` helper for str_replace operations |
+| `pkg/api/handlers/editor.go` | Added `publishArtifactUpdate()` helper and Centrifugo calls after create/str_replace |
+| `pkg/realtime/centrifugo.go` | Added debug logging for message publishing |
+| `pkg/realtime/types/artifact-updated.go` | Event type for artifact updates (already existed) |
+| `chartsmith-app/hooks/useCentrifugo.ts` | Fixed race condition in dependency array, added `handleArtifactUpdated` handler |
 
-### PR1.61: Body Parameter Hotfix ✅
+**Key Fixes:**
+- Fixed Centrifugo connection race condition (added `publicEnv.NEXT_PUBLIC_CENTRIFUGO_ADDRESS` to useEffect deps)
+- Fixed JSON field name mismatch (Go struct tags changed to camelCase: `chartId`, `revisionNumber`, `contentPending`)
 
-**Root Cause Fixed**: AI SDK v5 `useChat` body parameter was captured at initialization and became stale.
+#### Feature 2: Pending UI Indicators
 
-**Solution Applied**:
-- Removed `body` from `useChat` hook configuration
-- Added `getChatBody()` helper with `useCallback` for fresh params
-- Pass body at request-time via `sendMessage()` second argument
-- Fixed auto-send from URL to use request-level body
-- Fixed manual send to use request-level body
+| Component | Description |
+|-----------|-------------|
+| `chartsmith-app/components/FileTree.tsx` | Added yellow dot indicator for files with `contentPending` |
+| `chartsmith-app/atoms/workspace.ts` | `allFilesWithContentPendingAtom` derives files with pending changes |
 
-**Issues Resolved**:
-- ✅ Issue #1: No streaming on first message
-- ✅ Issue #2: Tool hallucination (AI uses fake XML)
-- ✅ Issue #5: First message vs subsequent behavior
+**Visual Indicators:**
+- Yellow dot (●) next to files with pending changes
+- Diff stats showing additions/deletions (e.g., `+10 / -10`)
 
-### PR1.65: UI Feature Parity ✅
+#### Feature 3: Commit/Discard Server Actions
 
-| Feature | Status |
-|---------|--------|
-| Three-panel layout (Chat LEFT → Explorer MIDDLE → Code RIGHT) | ✅ |
-| Code editor panel with Monaco syntax highlighting | ✅ |
-| Source/Rendered tabs for file viewing | ✅ |
-| Loading states and visual feedback | ✅ |
-| Landing page polish with upload options | ✅ |
-| ArtifactHubSearchModal integration | ✅ |
-| Consistent styling matching main workspace | ✅ |
+| Component | Description |
+|-----------|-------------|
+| `chartsmith-app/lib/workspace/actions/commit-pending-changes.ts` | Creates new revision promoting `content_pending` → `content` |
+| `chartsmith-app/lib/workspace/actions/discard-pending-changes.ts` | Clears pending changes without creating revision |
+| `chartsmith-app/app/test-ai-chat/[workspaceId]/client.tsx` | Commit/Discard buttons in tab bar (right of Source/Rendered) |
 
-### PR1.7 Prereq Fixes ✅
+**UI Location:** Buttons appear in editor tab bar when pending changes exist
+
+#### Critical Bug Fixes
 
 | Fix | Description | Files Changed |
 |-----|-------------|---------------|
-| Double Processing Bug | Added `ChatMessageIntent.NON_PLAN` to prevent Go worker from processing AI SDK prompts | `create-workspace-from-prompt.ts` |
-| Content Column Bug | Created `AddFileToChartPending()` to write new files to `content_pending` | `chart.go`, `editor.go` |
-| Revision Number Bug | Changed `\|\| 1` to `?? 0` to handle revision 0 correctly | `client.tsx`, `route.ts` |
-| System Prompt Enhancement | Updated to match Go backend and enforce tool usage | `prompts.ts` |
+| Workspace Revision 0 Loading | Removed `> 0` check that prevented loading charts/files for revision 0 | `lib/workspace/workspace.ts` |
+| Source View Content Display | Editor now shows `contentPending \|\| content` | `client.tsx` |
+| RawFile Interface | Fixed snake_case to camelCase property names | `components/types.ts` |
 
-**Known remaining issues (to be fixed in PR1.7):**
-- Files created via AI SDK don't appear in UI (need Centrifugo events + pending UI)
-- Chat history not persisted on refresh (need improved persistence)
+### Previous PRs (Summary)
 
----
+#### PR1.6: Feature Parity ✅
+- Simplified system prompt
+- Landing page with workspace creation
+- FileBrowser integration
+- Chat persistence actions
 
-## Documented Deferrals (PR1.7)
+#### PR1.61: Body Parameter Hotfix ✅
+- Fixed stale body parameter issue in AI SDK v5
+- `getChatBody()` helper for fresh params at request time
 
-1. **Revision tracking** - Creating revisions from AI SDK tool calls requires batching design
-2. **Centrifugo integration** - Real-time file updates will replace refetch pattern
-3. **Plan workflow** - Multi-file Plans from AI SDK require Go integration
+#### PR1.65: UI Feature Parity ✅
+- Three-panel layout (Chat → Explorer → Code)
+- Monaco syntax highlighting
+- Source/Rendered tabs
+- ArtifactHubSearchModal integration
+
+#### PR1.7 Prereq Fixes ✅
+- Double processing bug (NON_PLAN intent)
+- Content column bug (AddFileToChartPending)
+- Revision number bug (0 vs 1)
 
 ---
 
@@ -98,16 +108,10 @@ All prerequisite bug fixes for PR1.7 are complete. The AI SDK path now correctly
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Migration approach | Hybrid: New system parallel | Meets "replace" requirement with safety net |
-| Go LLM responsibility | None after PR1.5 | Clean separation: Node thinks, Go executes |
-| Tool count | **4 tools** (not 6) | Workspace creation handled by homepage flow |
-| Go communication | HTTP endpoints (port 8080) | Synchronous tool execution |
-| Tool → Go pattern | All 4 tools call Go | Consistent architecture, avoids bundling issues |
-| Default model | Claude Sonnet 4 | Anthropic's recommended model |
-| System prompt style | Minimal, behavior-focused | Let AI SDK provide tool schemas |
-| Chat persistence | AI SDK-specific actions | Bypass Go intent processing |
-| **Body parameter** | Request-level via sendMessage() | Prevents stale data issues |
-| **Transport** | Default (no TextStreamChatTransport) | Required for tool support |
+| Real-time updates | Centrifugo WebSocket | Existing infrastructure, user-scoped channels |
+| Pending changes storage | `content_pending` column | Allows diff display without creating revisions |
+| Commit/Discard UI | Tab bar (right side) | Non-intrusive, contextual to editor |
+| Revision creation | Only on Commit action | Batches all pending changes into single revision |
 
 ---
 
@@ -129,23 +133,21 @@ DEFAULT_AI_MODEL=anthropic/claude-sonnet-4-20250514
 
 # Go backend URL
 GO_BACKEND_URL=http://localhost:8080
+
+# Centrifugo (in chartsmith-app/.env.local)
+NEXT_PUBLIC_CENTRIFUGO_ADDRESS=ws://localhost:8000/connection/websocket
+CENTRIFUGO_TOKEN_HMAC_SECRET=change.me
 ```
 
 ---
 
 ## Blocking Dependencies
 
-### PR1.7 Dependencies
-- [x] PR1 complete
-- [x] PR1.5 complete
-- [x] PR1.6 complete
-- [x] PR1.61 complete
-- [x] PR1.65 complete
-
 ### PR2 Dependencies
 - [x] PR1 complete
 - [x] PR1.5 complete
-- [x] PR1.6 complete (optional but recommended)
+- [x] PR1.6 complete
+- [x] PR1.7 complete
 - [ ] helm CLI (v3.x) installed
 - [ ] kube-score CLI (v1.16+) installed
 
@@ -153,18 +155,16 @@ GO_BACKEND_URL=http://localhost:8080
 
 ## Next Actions
 
-### NEXT: PR1.7 Implementation
-1. Read `PRDs/PR1.7_Product_PRD.md` and `PRDs/PR1.7_Tech_PRD.md`
-2. Design revision batching strategy for AI SDK tool calls
-3. Integrate Centrifugo for real-time file updates
-4. Implement Plan workflow support
-
-### For PR2:
+### NEXT: PR2 Implementation (Validation Agent)
 1. Read `PRDs/PR2_Product_PRD.md` and `PRDs/PR2_Tech_PRD.md`
 2. Verify helm and kube-score CLI tools are installed
 3. Create `pkg/validation/` package structure
 4. Create validation endpoint in Go
 5. Create validateChart tool in TypeScript
+
+### Optional Cleanup:
+1. Remove debug console.log statements from `useCentrifugo.ts`
+2. Remove debug logging from `centrifugo.go` and `editor.go`
 
 ---
 
@@ -184,9 +184,8 @@ GO_BACKEND_URL=http://localhost:8080
 | `docs/issues/PR1.6_POST_IMPLEMENTATION_ISSUES.md` | Issue tracking (all resolved) |
 | `docs/research/2025-12-04-PR1.6-AI-SDK-STREAMING-RESEARCH.md` | Root cause analysis |
 | `docs/PR1.6_COMPLETION_REPORT.md` | What was built in PR1.6 |
-| `PRDs/PR1.61_IMPLEMENTATION_PLAN.md` | Body parameter fix plan |
-| `PRDs/PR1.65_UI_PARITY_PLAN.md` | UI parity implementation |
+| `PRDs/PR1.7_IMPLEMENTATION_PLAN.md` | PR1.7 implementation plan |
 
 ---
 
-*This document is the starting point for each work session. Last updated: Dec 5, 2025 (PR1.7 prereq fixes complete)*
+*This document is the starting point for each work session. Last updated: Dec 5, 2025 (PR1.7 complete)*

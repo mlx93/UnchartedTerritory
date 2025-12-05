@@ -1,9 +1,9 @@
 # PR1.7 Implementation Plan
 
-**Version**: 1.1
-**Status**: Ready for Implementation
+**Version**: 1.2
+**Status**: ✅ COMPLETE (Features 1-3)
 **Prerequisite**: ✅ All prerequisites completed (Bug 1 ✅, Bug 2 ✅)
-**Last Updated**: December 4, 2025
+**Last Updated**: December 5, 2025
 
 ---
 
@@ -920,27 +920,34 @@ Examples of when to use planProposal:
 - [x] `editor.go` uses `AddFileToChartPending()` for create command
 - [x] New files show as pending in database
 
-### Feature 1: Centrifugo
-- [ ] `artifact-updated` events published from Go textEditor handler
-- [ ] Test-ai-chat subscribes via `useCentrifugo`
-- [ ] File explorer updates without page refresh
-- [ ] Refetch workaround removed
+### Feature 1: Centrifugo ✅ COMPLETED
+- [x] `artifact-updated` events published from Go textEditor handler
+- [x] Test-ai-chat subscribes via `useCentrifugo`
+- [x] File explorer updates without page refresh
+- [x] Refetch workaround removed
+- [x] Fixed race condition in useEffect dependency array
+- [x] Fixed JSON field name mismatch (snake_case → camelCase)
+- [x] Fixed workspace not loading charts/files for revision 0
 
-### Feature 2: Pending UI
-- [ ] Pending changes count shown in sidebar
-- [ ] Files with pending changes marked in explorer
+### Feature 2: Pending UI ✅ COMPLETED
+- [x] Pending changes count shown in tab bar (right of Source/Rendered)
+- [x] Files with pending changes marked in explorer (yellow dot)
+- [x] Diff stats showing additions/deletions
 
-### Feature 3: Revision Tracking
-- [ ] "Commit" button creates new revision
-- [ ] "Discard" button clears pending without revision
-- [ ] Revision number increments correctly
-- [ ] Database shows `ai_sdk_commit` created_type
+### Feature 3: Revision Tracking ✅ COMPLETED
+- [x] "Commit" button creates new revision
+- [x] "Discard" button clears pending without revision
+- [x] Revision number increments correctly
+- [x] Database shows `ai_sdk_commit` created_type
+- [x] Source view shows `contentPending || content`
 
-### Feature 4: Plan Workflow (Optional)
+### Feature 4: Plan Workflow (Optional - NOT IMPLEMENTED)
 - [ ] `planProposal` tool registered
 - [ ] Plan proposals render in chat
 - [ ] Apply executes changes
 - [ ] Discard cancels proposal
+
+**Note**: Feature 4 was skipped as it's lower priority and optional. Can be implemented later if needed.
 
 ---
 
@@ -954,9 +961,9 @@ Examples of when to use planProposal:
 - `components/chat/PlanProposalCard.tsx` (optional - Feature 4)
 
 ### Modified Files
-- `pkg/workspace/chart.go` - ✅ AddFileToChartPending exists; TODO: Update to return `(string, error)` (Feature 1, Phase 1.0)
-- `pkg/api/handlers/editor.go` - ✅ Uses AddFileToChartPending; TODO: Capture fileID, add Centrifugo publishing (Feature 1)
-- `pkg/workspace/file.go` - Add GetFileIDByPath helper (Feature 1)
-- `app/test-ai-chat/[workspaceId]/client.tsx` - UI changes (Features 1-4)
+- `pkg/workspace/chart.go` - ✅ AddFileToChartPending returns `(string, error)` (Feature 1, Phase 1.0)
+- `pkg/api/handlers/editor.go` - ✅ Captures fileID, publishes Centrifugo events (Feature 1, Phase 1.1)
+- `pkg/workspace/file.go` - ✅ GetFileIDByPath helper added (Feature 1, Phase 1.1)
+- `app/test-ai-chat/[workspaceId]/client.tsx` - ✅ useCentrifugo added, refetch removed (Feature 1, Phase 1.2); Pending UI (Feature 2-3)
 - `lib/ai/tools/index.ts` - Register planProposal tool (optional - Feature 4)
 - `lib/ai/prompts.ts` - Update system prompt (optional - Feature 4)
