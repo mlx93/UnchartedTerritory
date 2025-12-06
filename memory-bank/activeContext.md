@@ -6,13 +6,22 @@
 
 ## Current Phase
 
-**Status**: PR1.7 Implementation ✅ COMPLETE
+**Status**: PR2.0 ✅ Complete; PR3.0 Parity Plan ✅ Ready to implement
 
-PR1.7 has been fully implemented. The AI SDK path now has:
-- Real-time file updates via Centrifugo integration
-- Pending changes UI indicators (yellow dots in file tree)
-- Commit/Discard functionality for revision management
-- Files properly display in Explorer for revision 0
+PR2.0 reintegrated AI SDK into the main workspace path (`/workspace/[id]`) behind a feature flag:
+- Adapter pattern bridges AI SDK to existing Message format
+- Feature flag `NEXT_PUBLIC_USE_AI_SDK_CHAT` for rollout/rollback
+- Persona propagation (auto/developer/operator) affects system prompts
+- Cancel support with partial response persistence
+- Centrifugo coordination prevents streaming conflicts
+
+PR3.0 strategy (Option A parity): Accept different AI prose while matching plan/flow parity.
+- Plan workflow: buffer `textEditor` create/str_replace tool calls → Go `/api/plan/create-from-tools` → sets `response_plan_id` → existing `PlanChatMessage` renders with Proceed/Ignore.
+- Proceed executes buffered tool calls; Ignore marks plan ignored.
+- Intent routing: still AI SDK; Go intent classification only gates off-topic/proceed/render.
+- Buffered tool storage: in-memory during stream; persisted to `workspace_plan.buffered_tool_calls` at plan creation (JSONB).
+- DB migration: add `workspace_plan.buffered_tool_calls` JSONB + index; rollback drops column.
+- Parity decision: Option A (same UI/flow, prose may differ).
 
 ---
 
@@ -27,91 +36,74 @@ PR1.7 has been fully implemented. The AI SDK path now has:
 | PR1.65 | UI Feature Parity | Day 5 | ✅ **Complete** |
 | PR1.7 Prereq | Bug Fixes for PR1.7 | Day 5 | ✅ **Complete** |
 | PR1.7 | Deeper System Integration | Day 6 | ✅ **Complete** |
-| PR2 | Validation Agent | Days 7-9 | **Ready for Implementation** |
+| PR2.0 | AI SDK Reintegration | Day 7 | ✅ **Complete** |
+| PR2 | Validation Agent | Days 8-10 | **Ready for Implementation** |
 
 ---
 
 ## Completed Work Summary
 
-### PR1.7: Deeper System Integration ✅
+### PR2.0: AI SDK Reintegration ✅
 
-#### Feature 1: Centrifugo Integration (Real-time File Updates)
+PR2.0 integrates AI SDK into the main workspace path, replacing Go worker chat with AI SDK streaming while preserving all existing UI.
 
-| Component | Description |
-|-----------|-------------|
-| `pkg/workspace/chart.go` | Modified `AddFileToChartPending()` to return `(string, error)` exposing the generated fileID |
-| `pkg/workspace/file.go` | Added `GetFileIDByPath()` helper for str_replace operations |
-| `pkg/api/handlers/editor.go` | Added `publishArtifactUpdate()` helper and Centrifugo calls after create/str_replace |
-| `pkg/realtime/centrifugo.go` | Added debug logging for message publishing |
-| `pkg/realtime/types/artifact-updated.go` | Event type for artifact updates (already existed) |
-| `chartsmith-app/hooks/useCentrifugo.ts` | Fixed race condition in dependency array, added `handleArtifactUpdated` handler |
+#### New Files Created
 
-**Key Fixes:**
-- Fixed Centrifugo connection race condition (added `publicEnv.NEXT_PUBLIC_CENTRIFUGO_ADDRESS` to useEffect deps)
-- Fixed JSON field name mismatch (Go struct tags changed to camelCase: `chartId`, `revisionNumber`, `contentPending`)
+| File | Purpose |
+|------|---------|
+| `lib/chat/messageMapper.ts` | UIMessage ↔ Message format conversion |
+| `lib/chat/__tests__/messageMapper.test.ts` | 33 unit tests (all passing) |
+| `hooks/useAISDKChatAdapter.ts` | Adapter bridging AI SDK to existing patterns |
+| `hooks/useLegacyChat.ts` | Wrapper for legacy Go worker path |
 
-#### Feature 2: Pending UI Indicators
+#### Modified Files
 
-| Component | Description |
-|-----------|-------------|
-| `chartsmith-app/components/FileTree.tsx` | Added yellow dot indicator for files with `contentPending` |
-| `chartsmith-app/atoms/workspace.ts` | `allFilesWithContentPendingAtom` derives files with pending changes |
+| File | Changes |
+|------|---------|
+| `app/api/chat/route.ts` | Added persona parameter, prompt selection |
+| `lib/ai/prompts.ts` | Added developer/operator prompts |
+| `components/ChatContainer.tsx` | Feature flag, adapter, streaming indicators |
+| `hooks/useCentrifugo.ts` | Skip updates for streaming messages |
+| `ARCHITECTURE.md` | PR2.0 documentation section |
 
-**Visual Indicators:**
-- Yellow dot (●) next to files with pending changes
-- Diff stats showing additions/deletions (e.g., `+10 / -10`)
+#### Key Features
 
-#### Feature 3: Commit/Discard Server Actions
+1. **Feature Flag**: `NEXT_PUBLIC_USE_AI_SDK_CHAT=true` enables AI SDK path
+2. **Adapter Pattern**: Converts UIMessage to Message format seamlessly
+3. **Status Mapping**: submitted→thinking, streaming→streaming, ready→complete
+4. **Persona Support**: auto/developer/operator affect system prompts
+5. **Cancel State**: Partial responses persisted on cancel
+6. **Centrifugo Coordination**: `currentStreamingMessageIdAtom` prevents conflicts
 
-| Component | Description |
-|-----------|-------------|
-| `chartsmith-app/lib/workspace/actions/commit-pending-changes.ts` | Creates new revision promoting `content_pending` → `content` |
-| `chartsmith-app/lib/workspace/actions/discard-pending-changes.ts` | Clears pending changes without creating revision |
-| `chartsmith-app/app/test-ai-chat/[workspaceId]/client.tsx` | Commit/Discard buttons in tab bar (right of Source/Rendered) |
+#### Bug Fixes (Pre-existing)
 
-**UI Location:** Buttons appear in editor tab bar when pending changes exist
-
-#### Critical Bug Fixes
-
-| Fix | Description | Files Changed |
-|-----|-------------|---------------|
-| Workspace Revision 0 Loading | Removed `> 0` check that prevented loading charts/files for revision 0 | `lib/workspace/workspace.ts` |
-| Source View Content Display | Editor now shows `contentPending \|\| content` | `client.tsx` |
-| RawFile Interface | Fixed snake_case to camelCase property names | `components/types.ts` |
+| Fix | File |
+|-----|------|
+| React hooks dependency warnings | `components/TtlshModal.tsx` |
 
 ### Previous PRs (Summary)
 
-#### PR1.6: Feature Parity ✅
+#### PR1.7: Deeper System Integration ✅
+- Real-time file updates via Centrifugo
+- Pending changes UI indicators (yellow dots)
+- Commit/Discard functionality
+
+#### PR1.6/1.61/1.65: Feature Parity ✅
 - Simplified system prompt
 - Landing page with workspace creation
-- FileBrowser integration
-- Chat persistence actions
-
-#### PR1.61: Body Parameter Hotfix ✅
-- Fixed stale body parameter issue in AI SDK v5
-- `getChatBody()` helper for fresh params at request time
-
-#### PR1.65: UI Feature Parity ✅
-- Three-panel layout (Chat → Explorer → Code)
-- Monaco syntax highlighting
-- Source/Rendered tabs
-- ArtifactHubSearchModal integration
-
-#### PR1.7 Prereq Fixes ✅
-- Double processing bug (NON_PLAN intent)
-- Content column bug (AddFileToChartPending)
-- Revision number bug (0 vs 1)
+- Three-panel layout
+- Body parameter hotfix
 
 ---
 
-## Key Technical Decisions (Resolved)
+## Key Technical Decisions (PR2.0)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Real-time updates | Centrifugo WebSocket | Existing infrastructure, user-scoped channels |
-| Pending changes storage | `content_pending` column | Allows diff display without creating revisions |
-| Commit/Discard UI | Tab bar (right side) | Non-intrusive, contextual to editor |
-| Revision creation | Only on Commit action | Batches all pending changes into single revision |
+| Integration approach | Adapter pattern | 75% less effort than rebuilding 27+ features |
+| Rollout strategy | Feature flag | Instant rollback, safe gradual rollout |
+| Review mechanism | Commit/Discard | Already working, avoids Go changes |
+| Interval tracking | useRef | React best practice for mutable values |
 
 ---
 
@@ -134,22 +126,13 @@ DEFAULT_AI_MODEL=anthropic/claude-sonnet-4-20250514
 # Go backend URL
 GO_BACKEND_URL=http://localhost:8080
 
-# Centrifugo (in chartsmith-app/.env.local)
+# Centrifugo
 NEXT_PUBLIC_CENTRIFUGO_ADDRESS=ws://localhost:8000/connection/websocket
 CENTRIFUGO_TOKEN_HMAC_SECRET=change.me
+
+# PR2.0: AI SDK Chat Feature Flag
+NEXT_PUBLIC_USE_AI_SDK_CHAT=false  # Set to 'true' to enable
 ```
-
----
-
-## Blocking Dependencies
-
-### PR2 Dependencies
-- [x] PR1 complete
-- [x] PR1.5 complete
-- [x] PR1.6 complete
-- [x] PR1.7 complete
-- [ ] helm CLI (v3.x) installed
-- [ ] kube-score CLI (v1.16+) installed
 
 ---
 
@@ -162,18 +145,10 @@ CENTRIFUGO_TOKEN_HMAC_SECRET=change.me
 4. Create validation endpoint in Go
 5. Create validateChart tool in TypeScript
 
-### Optional Cleanup:
-1. Remove debug console.log statements from `useCentrifugo.ts`
-2. Remove debug logging from `centrifugo.go` and `editor.go`
-
----
-
-## Sub-Agent Prompts
-
-| Prompt | Location |
-|--------|----------|
-| PR1.6 (includes 1.61/1.65) | `agent-prompts/PR1.6_SUB_AGENT.md` |
-| PR2 | `agent-prompts/PR2_SUB_AGENT.md` |
+### PR2.0 Post-Merge Tasks:
+1. Test in staging with `NEXT_PUBLIC_USE_AI_SDK_CHAT=true`
+2. Monitor error rates and response times
+3. After stable period: Remove `/test-ai-chat` directory
 
 ---
 
@@ -181,11 +156,10 @@ CENTRIFUGO_TOKEN_HMAC_SECRET=change.me
 
 | Document | Purpose |
 |----------|---------|
-| `docs/issues/PR1.6_POST_IMPLEMENTATION_ISSUES.md` | Issue tracking (all resolved) |
-| `docs/research/2025-12-04-PR1.6-AI-SDK-STREAMING-RESEARCH.md` | Root cause analysis |
-| `docs/PR1.6_COMPLETION_REPORT.md` | What was built in PR1.6 |
-| `PRDs/PR1.7_IMPLEMENTATION_PLAN.md` | PR1.7 implementation plan |
+| `docs/PR2.0_COMPLETION_REPORT.md` | Full PR2.0 implementation details |
+| `PRDs/PR2.0_REINTEGRATION_Tech_PRD.md` | PR2.0 technical specification |
+| `PRDs/PR2.0_REINTEGRATION_IMPLEMENTATION_PLAN.md` | PR2.0 implementation plan |
 
 ---
 
-*This document is the starting point for each work session. Last updated: Dec 5, 2025 (PR1.7 complete)*
+*This document is the starting point for each work session. Last updated: Dec 5, 2025 (PR2.0 complete)*

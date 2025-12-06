@@ -1,12 +1,40 @@
 # Post-PR1.5 Integration Plan: Collapsing AI SDK into Existing UI
 
-**Date**: 2024-12-04  
-**Status**: 📋 Planning  
-**Prerequisite**: PR1.5 (Tools) must be complete first
+**Date**: 2024-12-04
+**Updated**: 2025-12-05
+**Status**: ⚠️ SUPERSEDED - See PR2.0
+**Prerequisite**: PR1.5 (Tools) ✅ Complete | PR1.6 ✅ Complete | PR1.7 ✅ Complete
 
 ---
 
-## Overview
+## ⚠️ IMPORTANT: This Document is Superseded
+
+This original integration plan has been superseded by **PR2.0: AI SDK Reintegration**.
+
+**New Documents:**
+- **Tech PRD**: `PRDs/PR2.0_REINTEGRATION_Tech_PRD.md`
+- **Implementation Plan**: `PRDs/PR2.0_REINTEGRATION_IMPLEMENTATION_PLAN.md`
+
+### Why the Change?
+
+After completing PRs 1.5, 1.6, 1.61, 1.65, and 1.7, we identified that continuing to build the parallel `/test-ai-chat` path to full feature parity (PR1.8-PR1.17, estimated 113-163 hours) was not the most efficient approach.
+
+**Path A (Original Plan)**: Continue building parallel path to 100% parity
+- 27+ features to implement from scratch
+- Estimated 113-163 hours
+- Duplicating work that already exists
+
+**Path B (New Plan - PR2.0)**: Collapse AI SDK transport into main path
+- Keep all existing UI components
+- Only swap the chat transport layer
+- Estimated 30-40 hours
+- Feature flag for safe rollout
+
+The PR2.0 approach better aligns with the original requirements: *"Replace custom chat UI with Vercel AI SDK"* - not rebuild the entire application.
+
+---
+
+## Original Overview (Historical Reference)
 
 After PR1.5 adds tool support to the AI SDK chat, we will **integrate it into the existing UI** rather than maintaining separate pages. The goal is:
 
