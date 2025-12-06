@@ -21,6 +21,21 @@ This plan implements the 6 remaining features needed for full parity between the
 
 ---
 
+## Implementation Gaps Summary
+
+Based on codebase analysis (December 5, 2025), these gaps were identified and are addressed by this plan:
+
+| Gap | Description | Addressed In |
+|-----|-------------|--------------|
+| #1 | No `onFinish` callback in `/api/chat/route.ts` streamText() | Phase 2 (stub) → Phase 3 (full) |
+| #2 | No `chatMessageId` in `ChatRequestBody` interface | Phase 2 |
+| #3 | No intent classification before AI SDK | Phase 2 |
+| #4 | `messageMapper.ts:161-164` notes `followupActions` and `responseRollbackToRevisionNumber` unsupported | Phase 1 (followup) + Phase 2 (rollback) |
+| #5 | Go API missing endpoints: `/api/intent/classify`, `/api/plan/create-from-tools`, `/api/conversion/start` | Phase 2 + Phase 3 + Phase 4 |
+| #6 | No `buffered_tool_calls` column in `workspace_plan` table | Phase 3 (migration first) |
+
+---
+
 ## Current State Analysis
 
 ### What Exists (Post-PR2.0)
@@ -206,6 +221,10 @@ Phase 4: K8s Conversion Bridge (4-8 hours)
 
 ### Overview
 Implement low-complexity features that have no dependencies on other phases.
+
+**Gaps Addressed in This Phase:**
+- Gap #4 (partial): messageMapper.ts unsupported features → Enable `followupActions`
+- No existing page reload guard → Add `beforeunload` handler
 
 ### Changes Required
 
@@ -411,6 +430,15 @@ export async function updateChatMessageResponseAction(
 
 ### Overview
 Add HTTP endpoints to Go backend for intent classification and integrate rollback field population.
+
+**Gaps Addressed in This Phase:**
+- Gap #3: No intent classification in chat route → Add `/api/intent/classify` endpoint
+- Gap #5 (partial): Go API server missing endpoints → Add `/api/intent/classify`
+- Gap #4 (partial): messageMapper.ts unsupported features → Enable `responseRollbackToRevisionNumber`
+
+**Preparation for Phase 3:**
+- Add `chatMessageId` to `ChatRequestBody` now (Phase 3 depends on it)
+- Add `onFinish` callback stub to `streamText()` (Phase 3 will expand it)
 
 ### Changes Required
 
@@ -675,6 +703,80 @@ export async function commitPendingChangesAction(
 // via handleChatMessageUpdated, but verify it's working
 ```
 
+#### 2.5 Add `chatMessageId` to Chat Route (Preparation for Phase 3)
+
+**File**: `chartsmith-app/app/api/chat/route.ts`
+
+**Changes**: Add `chatMessageId` to request interface and extract it. This is needed for Phase 3 to associate plans with messages.
+
+```typescript
+// Update ChatRequestBody interface (around line 44-51):
+interface ChatRequestBody {
+  messages: UIMessage[];
+  provider?: string;
+  model?: string;
+  workspaceId?: string;
+  revisionNumber?: number;
+  persona?: ChatPersona;
+  chatMessageId?: string;  // PR3.0: Added for plan creation association
+}
+
+// In POST handler, extract chatMessageId:
+const { messages, provider, model, workspaceId, revisionNumber, persona, chatMessageId } = body;
+
+// Update logging:
+console.log('[/api/chat] Request received:', {
+  hasMessages: !!messages?.length,
+  provider,
+  model,
+  workspaceId,
+  revisionNumber,
+  persona: persona ?? 'auto',
+  chatMessageId,  // PR3.0
+});
+```
+
+#### 2.6 Add `onFinish` Callback Stub (Preparation for Phase 3)
+
+**File**: `chartsmith-app/app/api/chat/route.ts`
+
+**Changes**: Add `onFinish` callback to `streamText()` call. In Phase 2 this is a stub; Phase 3 will expand it for plan creation.
+
+```typescript
+// Current streamText call (around line 138-144):
+const result = streamText({
+  model: modelInstance,
+  system: systemPrompt,
+  messages: convertToModelMessages(messages),
+  tools,
+  stopWhen: stepCountIs(5),
+});
+
+// Updated with onFinish stub:
+const result = streamText({
+  model: modelInstance,
+  system: systemPrompt,
+  messages: convertToModelMessages(messages),
+  tools,
+  stopWhen: stepCountIs(5),
+  onFinish: async ({ response, finishReason, usage }) => {
+    // PR3.0 Phase 2: Stub for future plan creation logic
+    // Phase 3 will expand this to:
+    // 1. Check for buffered tool calls
+    // 2. Create plan via Go backend
+    // 3. Associate plan with chatMessageId
+    console.log('[/api/chat] Stream finished:', {
+      finishReason,
+      usage,
+      chatMessageId,
+      workspaceId,
+    });
+  },
+});
+```
+
+**Note**: The `onFinish` callback receives `response`, `finishReason`, and `usage`. In Phase 3, we'll add the buffered tool call logic here.
+
 ### Success Criteria - Phase 2
 
 #### Automated Verification:
@@ -700,7 +802,53 @@ export async function commitPendingChangesAction(
 ### Overview
 Implement the full plan workflow: intercept tool calls, create plan records, display `PlanChatMessage`, and execute on Proceed.
 
+**Gaps Addressed in This Phase:**
+- Gap #1: No `onFinish` callback → Expand stub from Phase 2 to buffer tool calls and create plans
+- Gap #2: No `chatMessageId` in chat route → Already added in Phase 2, now use it
+- Gap #5 (partial): Go API server missing endpoints → Add `/api/plan/create-from-tools`
+- Gap #6: No `buffered_tool_calls` column → Add database migration (FIRST)
+
+**⚠️ This is the most complex phase. Follow the order carefully:**
+1. Database migration (must exist before code that uses it)
+2. Tool interception infrastructure
+3. Go backend endpoint
+4. TypeScript client
+5. Chat route integration
+6. Frontend integration
+
 ### Changes Required
+
+#### 3.0 Database Migration (DO THIS FIRST)
+
+**File**: `chartsmith/migrations/XXXXXX_add_buffered_tool_calls.sql` (NEW)
+
+Create and run this migration BEFORE implementing any code that references `buffered_tool_calls`:
+
+```sql
+-- Add buffered_tool_calls column to store AI SDK tool calls for plan execution
+ALTER TABLE workspace_plan
+ADD COLUMN IF NOT EXISTS buffered_tool_calls JSONB DEFAULT '[]';
+
+-- Add index for potential queries on buffered tool calls
+CREATE INDEX IF NOT EXISTS idx_workspace_plan_has_buffered_tools
+ON workspace_plan ((buffered_tool_calls != '[]'::jsonb));
+
+COMMENT ON COLUMN workspace_plan.buffered_tool_calls IS
+'Stores AI SDK tool calls that are buffered during streaming and executed on Proceed. Format: [{id, toolName, args, timestamp}]';
+```
+
+**Rollback Migration**: `chartsmith/migrations/XXXXXX_add_buffered_tool_calls_down.sql`
+
+```sql
+ALTER TABLE workspace_plan DROP COLUMN IF EXISTS buffered_tool_calls;
+```
+
+**Verification**: After running migration, verify column exists:
+```bash
+make -C chartsmith db-migrate
+# Then verify:
+psql -c "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'workspace_plan' AND column_name = 'buffered_tool_calls';"
+```
 
 #### 3.1 Tool Call Interception Infrastructure
 
@@ -1187,6 +1335,10 @@ export function mapUIMessageToMessage(
 ### Overview
 Create HTTP bridge endpoint to trigger the existing Go conversion pipeline from the AI SDK path.
 
+**Gaps Addressed in This Phase:**
+- Gap #5 (final): Go API server missing endpoints → Add `/api/conversion/start`
+- No way to trigger conversion from AI SDK path → Add `convertK8sToHelm` tool
+
 ### Changes Required
 
 #### 4.1 Conversion HTTP Endpoint
@@ -1510,26 +1662,7 @@ const tools = workspaceId
 
 No new tables required. Adding one column to existing table.
 
-**Migration Script**: `chartsmith/migrations/XXXXXX_add_buffered_tool_calls.sql`
-
-```sql
--- Add buffered_tool_calls column to store AI SDK tool calls for plan execution
-ALTER TABLE workspace_plan
-ADD COLUMN IF NOT EXISTS buffered_tool_calls JSONB DEFAULT '[]';
-
--- Add index for potential queries on buffered tool calls
-CREATE INDEX IF NOT EXISTS idx_workspace_plan_has_buffered_tools
-ON workspace_plan ((buffered_tool_calls != '[]'::jsonb));
-
-COMMENT ON COLUMN workspace_plan.buffered_tool_calls IS
-'Stores AI SDK tool calls that are buffered during streaming and executed on Proceed. Format: [{id, toolName, args, timestamp}]';
-```
-
-**Rollback Migration**: `chartsmith/migrations/XXXXXX_add_buffered_tool_calls_down.sql`
-
-```sql
-ALTER TABLE workspace_plan DROP COLUMN IF EXISTS buffered_tool_calls;
-```
+**Note**: The migration for `buffered_tool_calls` is documented in **Phase 3, Section 3.0** and should be run as the first step of Phase 3 implementation.
 
 ### Feature Flag
 All changes are additive to the AI SDK path. Feature flag `NEXT_PUBLIC_USE_AI_SDK_CHAT=false` still reverts to legacy path.
