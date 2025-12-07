@@ -6,6 +6,8 @@
 **Status**: Ready for Implementation
 **Prerequisite**: PR3.0/3.1 merged (AI SDK infrastructure complete)
 
+> **Note**: All file paths in this document are relative to the `chartsmith/` directory.
+
 ---
 
 ## Executive Summary

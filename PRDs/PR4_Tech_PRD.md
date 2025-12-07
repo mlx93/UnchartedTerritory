@@ -6,6 +6,8 @@
 **Status**: Ready for Implementation
 **Prerequisite**: PR3.0/3.1 merged
 
+> **Note**: All file paths in this document are relative to the `chartsmith/` directory (e.g., `chartsmith-app/...` means `chartsmith/chartsmith-app/...`).
+
 ---
 
 ## Technical Overview
@@ -349,7 +351,8 @@ Note: Exported versions exist in `pkg/api/errors.go` but handlers use the unexpo
 ### Existing Infrastructure (Reference)
 
 **Tool Factories** (`chartsmith-app/lib/ai/tools/`):
-- `index.ts` - `createTools()` and `createBufferedTools()`
+- `index.ts` - `createTools()` factory function
+- `bufferedTools.ts` - `createBufferedTools()` for plan workflow
 - `textEditor.ts` - Example factory pattern
 - `utils.ts` - `callGoEndpoint()` helper
 
@@ -358,7 +361,7 @@ Note: Exported versions exist in `pkg/api/errors.go` but handlers use the unexpo
 - Lines 273-276: `sendMessage()` with body
 
 **Chat Container** (`chartsmith-app/components/ChatContainer.tsx`):
-- Line 214: Container div with `flex gap-2` - integration point for provider switcher
+- Line 214: `<div className="absolute right-4 top-[18px] flex gap-2">` - integration point for provider switcher (within form area)
 - Lines 216-276: Role selector dropdown (persona)
 - No provider selector currently
 

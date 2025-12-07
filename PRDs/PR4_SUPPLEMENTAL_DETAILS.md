@@ -2,6 +2,8 @@
 
 This document contains component pseudocode and rendering logic for reference during implementation. Primary specs are in PR4_Product_PRD.md and PR4_Tech_PRD.md.
 
+> **Note**: All file paths in this document are relative to the `chartsmith/` directory.
+
 ---
 
 ## ValidationResults Component
@@ -283,9 +285,11 @@ const {
 } = useAISDKChatAdapter(/* ... */);
 ```
 
-**Add to Header** (integration point is line 214, role selector is at lines 216-276):
+**Add to Form Button Area** (integration point is line 214: `<div className="absolute right-4 top-[18px] flex gap-2">`):
+
+The provider switcher should be added inside the existing flex container alongside the role selector:
 ```typescript
-<div className="flex items-center gap-2">
+{/* Line 214: <div className="absolute right-4 top-[18px] flex gap-2"> */}
   <LiveProviderSwitcher
     currentProvider={selectedProvider}
     currentModel={selectedModel}
@@ -293,11 +297,11 @@ const {
     disabled={status === "streaming"}
   />
 
-  {/* Existing role selector below */}
-  <DropdownMenu>
+  {/* Existing role selector (lines 216-276) */}
+  <div ref={roleMenuRef} className="relative">
     {/* ... existing role dropdown ... */}
-  </DropdownMenu>
-</div>
+  </div>
+{/* </div> */}
 ```
 
 ---
