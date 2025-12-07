@@ -1,7 +1,7 @@
 # Chartsmith AI SDK Migration - Demo Script (PR4.0)
 
 **Purpose**: Script for creating demo video showcasing AI SDK migration with PR4.0 features  
-**Duration**: ~4 minutes  
+**Duration**: ~5 minutes  
 **Format**: Loom or similar screen recording
 
 ---
@@ -45,12 +45,14 @@ curl http://localhost:3000         # Next.js frontend
 
 ---
 
-## Demo Script (4 Minutes)
+## Demo Script (5 Minutes)
 
-### Segment 1: Introduction (15 seconds)
+### Segment 1: Introduction (30 seconds)
 
 **What to Say:**
-> "Hi, I'm [Name]. This is Chartsmith—an AI-powered Helm chart development platform. I'll show you how it creates, validates, and modifies charts using natural language, with live AI provider switching."
+> "Hi, I'm [Name]. For this challenge, I forked Replicated's Chartsmith—a production-grade Helm chart development platform with a complex Go and TypeScript architecture. It was the perfect candidate for a Vercel AI SDK migration because it had a custom Anthropic SDK implementation locked to a single provider.
+>
+> My goal was to replace that custom chat system with Vercel AI SDK while preserving all existing functionality. Let me show you the result."
 
 **What to Show:**
 - Browser open to `http://localhost:3000`
@@ -187,21 +189,26 @@ curl http://localhost:3000         # Next.js frontend
 
 ---
 
-### Segment 6: Summary (15 seconds)
+### Segment 6: Summary & Reflection (45 seconds)
 
 **What to Say:**
-> "That's Chartsmith with Vercel AI SDK. We've shown chart creation, validation with actionable fixes, and live provider switching—all with a smooth, streaming experience. Thanks for watching!"
+> "That's Chartsmith with Vercel AI SDK. We've migrated from a custom Anthropic implementation to a modern, multi-provider architecture—while preserving all 27+ existing UI features.
+>
+> AI tools significantly accelerated this project. I used CodeLayer—a Claude Code harness—for deep codebase research and architectural planning. Cursor handled the implementation, letting me iterate quickly on the adapter pattern and tool integrations.
+>
+> The biggest learning? You don't have to rewrite everything. The adapter pattern let me swap the transport layer without touching the UI—reducing what could have been 150+ hours of work to about 40 hours.
+>
+> Thanks for watching!"
 
 **What to Show:**
 - Quick pan of the completed chart in file explorer
 - Final chat showing conversation across providers
-- Validation results showing improved status (if applicable)
 
 **Key Points:**
-- ✅ Natural language chart creation
-- ✅ Integrated validation with AI-powered suggestions
-- ✅ Multi-provider support with live switching
-- ✅ Full state persistence
+- ✅ Full AI SDK migration complete
+- ✅ Multi-provider support unlocked
+- ✅ AI tools (CodeLayer, Cursor) accelerated development
+- ✅ Adapter pattern = incremental modernization without full rewrite
 
 ---
 
@@ -215,7 +222,7 @@ curl http://localhost:3000         # Next.js frontend
   - [ ] AI interpreting validation issues
   - [ ] Provider switching in dropdown
   - [ ] Conversation preserved after switch
-- [ ] Video is ~4 minutes
+- [ ] Video is ~5 minutes
 - [ ] Audio quality is good
 - [ ] Screen recording captures all details
 
@@ -266,7 +273,7 @@ curl http://localhost:3000         # Next.js frontend
 
 ### Technical Highlights
 - **Vercel AI SDK**: Standardized patterns, multi-provider support
-- **Tool Integration**: 7 tools (including new validateChart)
+- **Tool Integration**: 6 tools (including new validateChart)
 - **State Management**: Full persistence across refresh
 - **Plan Workflow**: Proceed/Ignore for all file changes
 
