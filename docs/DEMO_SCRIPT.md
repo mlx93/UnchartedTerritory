@@ -1,8 +1,22 @@
-# Chartsmith AI SDK Migration - Demo Script
+# Chartsmith AI SDK Migration - Demo Script (PR4.0)
 
-**Purpose**: Script for creating demo video showing the AI SDK migration  
-**Duration**: ~5-7 minutes  
+**Purpose**: Script for creating demo video showcasing AI SDK migration with PR4.0 features  
+**Duration**: ~4 minutes  
 **Format**: Loom or similar screen recording
+
+---
+
+## Architecture Overview (What to Say)
+
+> "Before diving into the demo, let me briefly explain the architecture changes. Chartsmith originally used a custom Go backend that made direct Anthropic SDK calls—all LLM communication went through PostgreSQL notifications to a Go worker. This worked, but it locked us into a single provider and made the chat system difficult to extend.
+>
+> For this migration, I used an **adapter pattern**. Rather than rewriting the entire UI—which would have taken over a hundred hours—I created a thin adapter layer that bridges Vercel AI SDK's `useChat` hook to our existing React components. The adapter converts between AI SDK's message format and our internal format, so all 27+ existing UI features just work.
+>
+> The key change is where LLM calls happen. Previously, the Go backend orchestrated everything. Now, TypeScript handles all AI interactions through a new `/api/chat` streaming endpoint using AI SDK's `streamText`. Go still runs, but only for deterministic operations like file system access and Helm commands—it no longer makes any LLM calls.
+>
+> This also unlocked multi-provider support. Instead of being locked to Anthropic, we can now switch between Claude, GPT-4, and other models at runtime through OpenRouter. You'll see that in action later in the demo.
+>
+> The best part? All the existing UI components, our Jotai state management, the Centrifugo WebSocket updates, and database persistence—none of that changed. We swapped the transport layer without touching the UI."
 
 ---
 
@@ -24,319 +38,278 @@ curl http://localhost:8080/health  # Go backend
 curl http://localhost:3000         # Next.js frontend
 ```
 
-### 2. Test Data
-
-- Ensure database is set up with schema
-- Have test workspace ready (optional, can create during demo)
+### 2. Pre-Demo Checklist
+- [ ] Fresh workspace (no existing chart files)
+- [ ] Multiple API keys configured (Claude + OpenAI)
+- [ ] Browser developer tools closed (cleaner recording)
 
 ---
 
-## Demo Script
+## Demo Script (4 Minutes)
 
-### Segment 1: Introduction & Overview (30 seconds)
+### Segment 1: Introduction (15 seconds)
 
 **What to Say:**
-> "Hi, I'm [Name] and I've completed the Vercel AI SDK migration for Chartsmith. This demo shows how we replaced the custom chat implementation with Vercel AI SDK while maintaining all existing functionality."
+> "Hi, I'm [Name]. This is Chartsmith—an AI-powered Helm chart development platform. I'll show you how it creates, validates, and modifies charts using natural language, with live AI provider switching."
 
 **What to Show:**
 - Browser open to `http://localhost:3000`
-- Application running and responsive
-- Quick overview of the UI (chat interface visible)
+- Clean workspace visible
+- Chat interface ready
 
 ---
 
-### Segment 2: Application Startup (30 seconds)
+### Segment 2: Application Startup (15 seconds)
 
 **What to Say:**
-> "Let me show you the application starting up. The Go backend runs on port 8080, and Next.js runs on port 3000. Both services are running and healthy."
+> "The Go backend runs on port 8080, Next.js on 3000. Both services are healthy and ready."
 
 **What to Show:**
-1. Terminal showing Go backend logs: `Starting HTTP server for AI SDK tools on port 8080`
+1. Terminal showing Go backend: `Starting HTTP server for AI SDK tools on port 8080`
 2. Terminal showing Next.js: `Ready in X ms`
 3. Browser showing application loaded
-4. Quick check of browser console (no errors)
 
 **Key Points:**
 - ✅ Both services running
-- ✅ No console errors
 - ✅ Application loads successfully
 
 ---
 
-### Segment 3: Chart Creation via Chat (2 minutes)
+### Segment 3: Chart Creation + State Persistence (1 minute 30 seconds)
 
 **What to Say:**
-> "Now let's create a Helm chart using natural language. I'll ask Chartsmith to create a simple nginx deployment chart."
+> "Let's create a Helm chart using natural language. I'll ask Chartsmith to create a simple nginx deployment."
 
 **What to Show:**
 
-1. **Type in chat**: "Create a simple nginx deployment chart"
+#### 3.1: Create the Chart
+1. **Type in chat**: `"Create a simple nginx deployment"`
 2. **Show streaming response**:
    - Text appears character by character
-   - Highlight the smooth streaming
-   - Point out the "Thinking..." indicator
-   - Show the streaming status
+   - Show the "Thinking..." indicator transitioning to streaming
+   - Tool calls happening (file operations)
 
-3. **Show AI SDK features**:
-   - Tool calls appearing (if visible in UI)
-   - File operations happening
-   - Real-time updates via Centrifugo
-
-4. **Show result**:
+3. **Show result**:
    - Chart files created (Chart.yaml, values.yaml, templates/)
    - File explorer showing new files
    - Code editor showing file contents
 
+4. **Show Proceed/Ignore buttons** (PR4.0 fix):
+   - Point out: "Notice the Proceed and Ignore buttons appearing—this was fixed in PR4.0"
+   - Buttons appear after ~500ms once the plan is linked
+
+#### 3.2: State Persistence (Page Refresh)
+
+**What to Say:**
+> "Let me refresh the page to demonstrate state persistence. All our conversation history and files remain intact."
+
+**What to Show:**
+1. **Press F5 or click refresh**
+2. **Show page reloading**
+3. **Point out**:
+   - Conversation history still visible
+   - Chart files still in file explorer
+   - Workspace state fully preserved
+
 **Key Points:**
 - ✅ Streaming works smoothly
-- ✅ AI understands natural language
-- ✅ Files are created correctly
-- ✅ Real-time updates work
+- ✅ Proceed/Ignore buttons appear correctly (PR4.0 fix)
+- ✅ Full state persistence across page refresh
+- ✅ Files created correctly
 
 ---
 
-### Segment 4: Plan Workflow (PR3.0) (1 minute)
+### Segment 4: Chart Validation (1 minute) ← NEW in PR4.0
 
 **What to Say:**
-> "One of the key features we implemented is the plan workflow. When the AI proposes changes, users can review and approve them before execution."
+> "Now let's validate our chart. Chartsmith runs a full validation pipeline—Helm lint, Helm template, and kube-score—then the AI interprets the results."
 
 **What to Show:**
 
-1. **Send a message that triggers a plan**: "Add a ConfigMap to the nginx chart"
-2. **Show PlanChatMessage component**:
-   - Plan description displayed
-   - Action files listed
-   - Proceed/Ignore buttons visible
-3. **Click Proceed**:
-   - Show execution happening
-   - Files being updated
-   - Status changes
+1. **Type in chat**: `"Validate my chart"`
+
+2. **Show validation in progress**:
+   - AI calling the validateChart tool
+   - Processing indicator
+
+3. **Show validation results component**:
+   - Overall status badge (pass/warning/fail)
+   - **Helm Lint**: Results with any warnings
+   - **Helm Template**: Success with resource count
+   - **Kube-score**: Findings with severity colors:
+     - 🔴 Critical (red)
+     - 🟡 Warning (yellow)
+     - 🔵 Info (blue)
+
+4. **Show AI interpretation**:
+   - Natural language explanation of issues
+   - Specific fix suggestions for each finding
+   - Point out: "The AI identifies that we're missing resource limits—a common best practice issue"
 
 **Key Points:**
-- ✅ Plan workflow working
-- ✅ User can review before execution
-- ✅ Proceed/Ignore functionality
+- ✅ Validation pipeline runs end-to-end
+- ✅ Results displayed with severity indicators
+- ✅ AI provides actionable fix suggestions
 
 ---
 
-### Segment 5: Tool Calling Demonstration (1 minute)
+### Segment 5: Live Provider Switching + Fixing Issues (45 seconds) ← NEW in PR4.0
 
 **What to Say:**
-> "The AI can call tools to perform operations. Let me show you how it uses the textEditor tool to modify files."
+> "Let's fix the resource limits issue. Then I'll switch to a different AI provider mid-conversation—notice how the history is preserved."
 
 **What to Show:**
 
-1. **Ask AI to modify a file**: "Update the nginx image tag to 1.25 in values.yaml"
-2. **Show tool execution**:
-   - AI response mentions using textEditor tool
-   - File gets updated
-   - Changes visible in editor
-3. **Show pending changes**:
-   - Yellow dot indicator
-   - Commit/Discard buttons
+#### 5.1: Add Resource Limits (with Claude)
+1. **Type in chat**: `"Add resource limits to the deployment"`
+2. **Show response**:
+   - AI proposes changes to deployment template
+   - Resource limits added (requests/limits for CPU and memory)
+3. **Click Proceed** to apply changes
+
+#### 5.2: Switch Provider
+1. **Click provider dropdown** in chat header (LiveProviderSwitcher)
+2. **Select GPT-4o** (or another available provider)
+3. **Point out**: "Watch—I'm switching from Claude to GPT-4o"
+
+#### 5.3: Continue with New Provider
+1. **Type in chat**: `"Lower the resource limits"`
+2. **Show response from GPT-4o**:
+   - AI modifies the resource values
+   - Different prose style (subtle difference)
+3. **Point out**: "The conversation history is fully preserved, and GPT-4o picks up right where Claude left off"
 
 **Key Points:**
-- ✅ Tool calling works
-- ✅ File operations successful
-- ✅ Pending changes tracked
+- ✅ Provider switching works mid-conversation
+- ✅ Full conversation history preserved
+- ✅ Seamless transition between providers
+- ✅ Plan workflow (Proceed/Ignore) works with any provider
 
 ---
 
-### Segment 6: Code Walkthrough - Key Changes (2 minutes)
+### Segment 6: Summary (15 seconds)
 
 **What to Say:**
-> "Let me walk you through the key code changes. The migration uses an adapter pattern to bridge AI SDK to our existing UI."
+> "That's Chartsmith with Vercel AI SDK. We've shown chart creation, validation with actionable fixes, and live provider switching—all with a smooth, streaming experience. Thanks for watching!"
 
 **What to Show:**
-
-### 6.1: Adapter Pattern (`hooks/useAISDKChatAdapter.ts`)
-
-**Open File**: `chartsmith-app/hooks/useAISDKChatAdapter.ts`
-
-**Explain:**
-- "This adapter bridges the AI SDK `useChat` hook to our existing Message format"
-- Show the `useAISDKChatAdapter` function
-- Point out message mapping logic
-- Show how it integrates with existing ChatContainer
-
-**Key Code Sections:**
-```typescript
-// Line ~50: useChat hook integration
-const { messages, append, ... } = useChat({...})
-
-// Line ~100: Message format conversion
-const convertedMessages = mapUIMessagesToMessages(uiMessages)
-
-// Line ~150: Status flag mapping
-isThinking: status === 'submitted',
-isStreaming: status === 'streaming',
-```
-
----
-
-### 6.2: API Route (`app/api/chat/route.ts`)
-
-**Open File**: `chartsmith-app/app/api/chat/route.ts`
-
-**Explain:**
-- "This is the new chat endpoint using Vercel AI SDK's streamText"
-- Show the route handler
-- Point out tool integration
-- Show provider selection
-
-**Key Code Sections:**
-```typescript
-// Line ~26: AI SDK imports
-import { streamText, convertToModelMessages, ... } from 'ai'
-
-// Line ~272: Main streaming call
-const result = streamText({
-  model: getModel(provider),
-  messages: convertedMessages,
-  system: systemPrompt,
-  tools: createTools(...),
-})
-
-// Line ~280: Return stream response
-return result.toTextStreamResponse()
-```
+- Quick pan of the completed chart in file explorer
+- Final chat showing conversation across providers
+- Validation results showing improved status (if applicable)
 
 **Key Points:**
-- ✅ Using Vercel AI SDK (`ai` package)
-- ✅ No `@anthropic-ai/sdk` imports
-- ✅ Multi-provider support via OpenRouter
-- ✅ Tool integration working
-
----
-
-### Segment 7: Feature Flag & Rollback (30 seconds)
-
-**What to Say:**
-> "We implemented a feature flag for safe rollout. The AI SDK path is controlled by `NEXT_PUBLIC_USE_AI_SDK_CHAT`."
-
-**What to Show:**
-
-1. **Open `.env.local`** (or show environment variable)
-   ```env
-   NEXT_PUBLIC_USE_AI_SDK_CHAT=true
-   ```
-
-2. **Explain rollback**:
-   - "If issues occur, we can instantly rollback by setting this to false"
-   - "Both paths use the same database, so no data migration needed"
-
-**Key Points:**
-- ✅ Feature flag for safe rollout
-- ✅ Instant rollback capability
-- ✅ No data migration required
-
----
-
-### Segment 8: Test Results (30 seconds)
-
-**What to Say:**
-> "All tests are passing. We have 116 unit tests and integration tests covering the migration."
-
-**What to Show:**
-
-1. **Run tests**:
-   ```bash
-   cd chartsmith-app
-   npm run test:unit
-   ```
-
-2. **Show results**:
-   ```
-   Test Suites: 9 passed, 9 total
-   Tests:       116 passed, 116 total
-   ```
-
-**Key Points:**
-- ✅ All tests passing
-- ✅ Comprehensive test coverage
-- ✅ No regressions
-
----
-
-### Segment 9: Summary & Improvements (30 seconds)
-
-**What to Say:**
-> "In summary, we've successfully migrated Chartsmith to Vercel AI SDK. The migration maintains all existing functionality while providing better streaming, multi-provider support, and a more maintainable codebase."
-
-**What to Show:**
-
-- Quick recap of key improvements:
-  - ✅ Standardized AI SDK patterns
-  - ✅ Multi-provider support (OpenRouter)
-  - ✅ Better streaming experience
-  - ✅ Simplified state management
-  - ✅ All features preserved
+- ✅ Natural language chart creation
+- ✅ Integrated validation with AI-powered suggestions
+- ✅ Multi-provider support with live switching
+- ✅ Full state persistence
 
 ---
 
 ## Post-Demo Checklist
 
 - [ ] Video shows all required elements:
-  - [ ] Application starting successfully
-  - [ ] Creating a chart via chat
-  - [ ] Streaming responses working
-  - [ ] Key code changes walkthrough
-- [ ] Video is clear and well-paced (5-7 minutes)
+  - [ ] Chart creation with streaming
+  - [ ] Page refresh showing state persistence
+  - [ ] Proceed/Ignore buttons appearing
+  - [ ] Validation results with severity colors
+  - [ ] AI interpreting validation issues
+  - [ ] Provider switching in dropdown
+  - [ ] Conversation preserved after switch
+- [ ] Video is ~4 minutes
 - [ ] Audio quality is good
 - [ ] Screen recording captures all details
-- [ ] Code walkthrough is easy to follow
 
 ---
 
 ## Troubleshooting Tips
+
+### If Proceed/Ignore buttons don't appear:
+- Wait ~500ms after streaming completes (PR4.0 refetch delay)
+- Check browser console for errors
+- Verify `responsePlanId` is being set in the database
+
+### If validation fails:
+- Ensure chart files exist in workspace
+- Check Go backend logs for tool execution
+- Verify helm, kube-score are installed
+
+### If provider switching doesn't work:
+- Verify multiple API keys are configured
+- Check `OPENROUTER_API_KEY` or individual provider keys
+- Check browser console for provider errors
 
 ### If streaming doesn't work:
 - Check `NEXT_PUBLIC_USE_AI_SDK_CHAT=true` is set
 - Verify API keys are configured
 - Check browser console for errors
 
-### If plan workflow doesn't show:
-- Ensure PR3.0 features are deployed
-- Check that message triggers plan creation
-- Verify `buffered_tool_calls` column exists in database
-
-### If tests fail:
-- Run `npm install` to ensure dependencies
-- Check Node.js version (18+)
-- Verify Go version (1.22+)
-
----
-
-## Alternative Demo Flow (Shorter Version - 3 minutes)
-
-If you need a shorter demo:
-
-1. **Introduction** (15s)
-2. **Chart Creation** (1m) - Show streaming and file creation
-3. **Code Walkthrough** (1m) - Show adapter and API route
-4. **Summary** (15s)
-
 ---
 
 ## Key Talking Points
 
-### Architecture Decisions
-- **Adapter Pattern**: Chose adapter over rewrite (75% less effort)
-- **Feature Flag**: Safe rollout with instant rollback
-- **Preserved UI**: All existing components kept
+### PR4.0 New Features
+
+1. **Chart Validation Agent**
+   - Runs helm lint → helm template → kube-score pipeline
+   - Returns structured results with severity levels
+   - AI interprets and provides fix suggestions
+
+2. **Live Provider Switching**
+   - Dropdown to switch providers mid-conversation
+   - Conversation history fully preserved
+   - Supports Claude, GPT-4, and other OpenRouter models
+
+3. **Message Refetch Fix**
+   - Polls for `responsePlanId` after streaming
+   - Fixes missing Proceed/Ignore buttons
+   - ~500ms delay then buttons appear
 
 ### Technical Highlights
-- **Zero `@anthropic-ai/sdk`**: Fully migrated to AI SDK Core
-- **Multi-Provider**: OpenRouter supports 300+ models
-- **Tool Integration**: 6 tools working seamlessly
-- **Plan Workflow**: Full parity with legacy path
+- **Vercel AI SDK**: Standardized patterns, multi-provider support
+- **Tool Integration**: 7 tools (including new validateChart)
+- **State Management**: Full persistence across refresh
+- **Plan Workflow**: Proceed/Ignore for all file changes
 
-### Testing
-- **116 tests passing**: Comprehensive coverage
-- **No regressions**: All existing features work
-- **Integration tests**: Tools tested end-to-end
+---
+
+## Alternative: Extended Demo (7 minutes)
+
+If you have more time, add these segments:
+
+### Extended Segment: Code Walkthrough (2 minutes)
+
+**What to Say:**
+> "Let me show you the key code changes that power these features."
+
+**What to Show:**
+
+#### Adapter Pattern (`hooks/useAISDKChatAdapter.ts`)
+- Show how AI SDK `useChat` bridges to existing UI
+- Point out provider/model state management
+- Show message format conversion
+
+#### Validation Tool (`lib/tools/validation.ts`)
+- Show `validateChart` tool definition
+- Pipeline execution: lint → template → kube-score
+- Structured result format
+
+#### Live Provider Switcher (`components/LiveProviderSwitcher.tsx`)
+- Dropdown component in chat header
+- Provider state passed to adapter
+- Seamless switching logic
+
+### Extended Segment: Test Results (30 seconds)
+
+**What to Show:**
+```bash
+cd chartsmith-app
+npm run test:unit
+
+# Results:
+# Test Suites: 10 passed, 10 total
+# Tests:       125 passed, 125 total
+```
 
 ---
 
 **Good luck with your demo! 🎬**
-
