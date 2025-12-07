@@ -128,7 +128,7 @@ This matches the main branch behavior where:
   </div>
 )}
 
-{/* For applying/applied/partially_applied - show file list (handled below) */}
+{/* For applying/applied - show file list (handled below) */}
 {/* Description is already visible in the chat stream - no need to duplicate */}
 ```
 
@@ -139,16 +139,16 @@ This matches the main branch behavior where:
 The existing condition is correct - file list appears when status is 'applying' or 'applied':
 
 ```tsx
-{(plan.status === 'applying' || plan.status === 'applied' || plan.status === 'partially_applied') && (
+{(plan.status === 'applying' || plan.status === 'applied') && (
 ```
 
-**Add "partially_applied" status** for error handling (see Phase 3).
+This matches the main branch behavior - file list only shows during/after execution.
 
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] TypeScript compiles: `cd chartsmith-app && npm run build`
-- [ ] Linting passes: `cd chartsmith-app && npm run lint`
+- [x] TypeScript compiles: `cd chartsmith-app && npm run build`
+- [x] Linting passes: `cd chartsmith-app && npm run lint`
 
 #### Manual Verification:
 - [ ] Plan card shows "Click Proceed to generate file changes" placeholder
@@ -241,7 +241,7 @@ Begin execution now. Create or modify each file using the textEditor tool.`;
 ```typescript
 "use server";
 
-import { streamText, convertToModelMessages } from 'ai';
+import { streamText, stepCountIs } from 'ai';
 import { Session } from "@/lib/types/session";
 import { getDB } from "@/lib/data/db";
 import { getParam } from "@/lib/data/param";
@@ -283,6 +283,9 @@ async function publishPlanUpdate(
  * Adds or updates an action file in the plan.
  * This mimics Go's behavior in pkg/listener/execute-plan.go:116-153
  * where action files are added dynamically as they're discovered.
+ *
+ * Uses the existing /api/plan/update-action-file-status endpoint,
+ * which we extend to support adding new files (not just updating existing ones).
  */
 async function addOrUpdateActionFile(
   workspaceId: string,
@@ -293,7 +296,7 @@ async function addOrUpdateActionFile(
 ): Promise<void> {
   try {
     await callGoEndpoint<{ success: boolean }>(
-      "/api/plan/add-or-update-action-file",
+      "/api/plan/update-action-file-status",  // Existing endpoint, extended to add files
       { workspaceId, planId, path, action, status }
     );
   } catch (error) {
@@ -317,7 +320,7 @@ async function addOrUpdateActionFile(
  * 2. Call AI SDK with execution prompt + textEditor tool
  * 3. As tools are called, add action files dynamically (like Go does)
  * 4. Tools execute against Go /api/tools/editor endpoint
- * 5. Update plan status to 'applied' (or 'partially_applied' on partial failure)
+ * 5. Update plan status to 'applied' on success, 'review' on failure
  */
 export async function executeViaAISDK({
   session,
@@ -347,9 +350,8 @@ export async function executeViaAISDK({
   const model = getModel(provider);
   const tools = createTools(undefined, workspaceId, revisionNumber);
 
-  // Track files being processed and their status
-  const fileStatus = new Map<string, 'pending' | 'creating' | 'created' | 'failed'>();
-  let hasFailures = false;
+  // Track files being processed
+  const processedFiles = new Set<string>();
 
   try {
     // 3. Execute via AI SDK with tools
@@ -358,37 +360,23 @@ export async function executeViaAISDK({
       system: CHARTSMITH_EXECUTION_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: executionInstruction }],
       tools,
-      maxSteps: 50, // Allow many tool calls for multi-file operations
-      onStepFinish: async ({ toolCalls, toolResults }) => {
+      stopWhen: stepCountIs(50), // Allow many tool calls for multi-file operations (AI SDK v5 pattern)
+      onStepFinish: async ({ toolCalls }) => {
         // Add/update action files as tools are called
         // This mimics Go's behavior where file list is built dynamically
-        for (let i = 0; i < (toolCalls ?? []).length; i++) {
-          const toolCall = toolCalls![i];
-          const toolResult = toolResults?.[i];
-
+        for (const toolCall of toolCalls ?? []) {
           if (toolCall.toolName === 'textEditor') {
             const args = toolCall.args as { path?: string; command?: string };
-            if (args.path) {
+            if (args.path && !processedFiles.has(args.path)) {
               const action = args.command === 'create' ? 'create' : 'update';
 
               if (args.command === 'view') {
                 // First view - add file with 'pending' status
-                if (!fileStatus.has(args.path)) {
-                  fileStatus.set(args.path, 'pending');
-                  await addOrUpdateActionFile(workspaceId, planId, args.path, action, 'pending');
-                }
+                await addOrUpdateActionFile(workspaceId, planId, args.path, action, 'pending');
               } else if (args.command === 'create' || args.command === 'str_replace') {
-                // Check if tool succeeded
-                const succeeded = toolResult && !toolResult.isError;
-                if (succeeded) {
-                  fileStatus.set(args.path, 'created');
-                  await addOrUpdateActionFile(workspaceId, planId, args.path, action, 'created');
-                } else {
-                  fileStatus.set(args.path, 'failed');
-                  hasFailures = true;
-                  // Keep as 'creating' to indicate it was attempted but failed
-                  await addOrUpdateActionFile(workspaceId, planId, args.path, action, 'creating');
-                }
+                // File created/updated - mark as created
+                await addOrUpdateActionFile(workspaceId, planId, args.path, action, 'created');
+                processedFiles.add(args.path);
               }
             }
           }
@@ -401,33 +389,21 @@ export async function executeViaAISDK({
       // Stream consumed - side effects handled in onStepFinish
     }
 
-    // 4. Update plan status based on outcome
-    const finalStatus = hasFailures ? 'partially_applied' : 'applied';
+    // 4. Update plan status to 'applied'
     await db.query(
-      `UPDATE workspace_plan SET status = $1, proceed_at = NOW(), updated_at = NOW() WHERE id = $2`,
-      [finalStatus, planId]
+      `UPDATE workspace_plan SET status = 'applied', proceed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [planId]
     );
     await publishPlanUpdate(workspaceId, planId);
 
   } catch (error) {
     console.error('[executeViaAISDK] Execution failed:', error);
 
-    // Check if any files were created successfully
-    const successCount = Array.from(fileStatus.values()).filter(s => s === 'created').length;
-
-    if (successCount > 0) {
-      // Partial success - mark as partially_applied
-      await db.query(
-        `UPDATE workspace_plan SET status = 'partially_applied', updated_at = NOW() WHERE id = $1`,
-        [planId]
-      );
-    } else {
-      // Complete failure - reset to review
-      await db.query(
-        `UPDATE workspace_plan SET status = 'review', updated_at = NOW() WHERE id = $1`,
-        [planId]
-      );
-    }
+    // Reset to review on failure (matches Go behavior)
+    await db.query(
+      `UPDATE workspace_plan SET status = 'review', updated_at = NOW() WHERE id = $1`,
+      [planId]
+    );
     await publishPlanUpdate(workspaceId, planId);
 
     throw error;
@@ -485,86 +461,76 @@ const handleProceed = async () => {
 };
 ```
 
-#### 2.4 Add Go Endpoint for Adding/Updating Action Files
+#### 2.4 Extend Existing UpdateActionFileStatus Endpoint
 
 **File**: `pkg/api/handlers/plan.go`
 
-Add a new endpoint that allows TypeScript to add action files dynamically during execution:
+The existing `UpdateActionFileStatus` endpoint (lines 248-331) returns an error if the file is not found. Extend it to **add the file if not found** instead of returning an error. This allows TypeScript to add action files dynamically during execution.
 
+**Current behavior** (lines 309-312):
 ```go
-type AddOrUpdateActionFileRequest struct {
-    WorkspaceID string `json:"workspaceId"`
-    PlanID      string `json:"planId"`
-    Path        string `json:"path"`
-    Action      string `json:"action"` // "create" or "update"
-    Status      string `json:"status"` // "pending", "creating", "created"
-}
-
-func (h *PlanHandler) AddOrUpdateActionFile(c echo.Context) error {
-    var req AddOrUpdateActionFileRequest
-    if err := c.Bind(&req); err != nil {
-        return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-    }
-
-    ctx := c.Request().Context()
-
-    // Get current plan with lock
-    tx, err := h.db.Begin(ctx)
-    if err != nil {
-        return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-    }
-    defer tx.Rollback(ctx)
-
-    plan, err := workspace.GetPlan(ctx, tx, req.PlanID)
-    if err != nil {
-        return c.JSON(http.StatusNotFound, map[string]string{"error": "Plan not found"})
-    }
-
-    // Check if file already exists in action files
-    found := false
-    for i, af := range plan.ActionFiles {
-        if af.Path == req.Path {
-            // Update existing
-            plan.ActionFiles[i].Status = req.Status
-            found = true
-            break
-        }
-    }
-
-    if !found {
-        // Add new action file
-        plan.ActionFiles = append(plan.ActionFiles, workspacetypes.ActionFile{
-            Path:   req.Path,
-            Action: req.Action,
-            Status: req.Status,
-        })
-    }
-
-    // Update database
-    if err := workspace.UpdatePlanActionFiles(ctx, tx, plan.ID, plan.ActionFiles); err != nil {
-        return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-    }
-
-    if err := tx.Commit(ctx); err != nil {
-        return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-    }
-
-    // Send realtime update
-    userIDs, _ := workspace.ListUserIDsForWorkspace(ctx, req.WorkspaceID)
-    e := realtimetypes.PlanUpdatedEvent{
-        WorkspaceID: req.WorkspaceID,
-        Plan:        plan,
-    }
-    realtime.SendEvent(ctx, realtimetypes.Recipient{UserIDs: userIDs}, e)
-
-    return c.JSON(http.StatusOK, map[string]bool{"success": true})
+if !found {
+    writeBadRequest(w, "Action file not found: "+req.Path)
+    return
 }
 ```
 
-Register the endpoint in `pkg/api/routes.go`:
-
+**New behavior** - add the file if not found:
 ```go
-planGroup.POST("/add-or-update-action-file", planHandler.AddOrUpdateActionFile)
+if !found {
+    // Add new action file (supports dynamic file list building during AI SDK execution)
+    plan.ActionFiles = append(plan.ActionFiles, types.ActionFile{
+        Path:   req.Path,
+        Action: req.Action, // Need to add Action field to request
+        Status: req.Status,
+    })
+}
+```
+
+**Also update the request struct** (line 249) to include `Action`:
+```go
+// UpdateActionFileStatusRequest represents a request to update or add an action file
+type UpdateActionFileStatusRequest struct {
+    WorkspaceID string `json:"workspaceId"`
+    PlanID      string `json:"planId"`
+    Path        string `json:"path"`
+    Action      string `json:"action,omitempty"` // "create" or "update" - required when adding new file
+    Status      string `json:"status"`           // "pending", "creating", "created"
+}
+```
+
+**Update validation** (around line 266) to require `Action` when adding new files:
+```go
+// Validate required fields
+if req.WorkspaceID == "" || req.PlanID == "" || req.Path == "" || req.Status == "" {
+    writeBadRequest(w, "workspaceId, planId, path, and status are required")
+    return
+}
+```
+
+This approach:
+- Reuses the existing endpoint instead of creating a new one
+- Maintains backward compatibility (existing callers that only update status still work)
+- No new route registration needed - `/api/plan/update-action-file-status` already exists
+
+**Update TypeScript caller** in `execute-via-ai-sdk.ts` to use existing endpoint:
+```typescript
+async function addOrUpdateActionFile(
+  workspaceId: string,
+  planId: string,
+  path: string,
+  action: "create" | "update",
+  status: "pending" | "creating" | "created"
+): Promise<void> {
+  try {
+    await callGoEndpoint<{ success: boolean }>(
+      "/api/plan/update-action-file-status",  // Use existing endpoint
+      { workspaceId, planId, path, action, status }
+    );
+  } catch (error) {
+    console.error(`[executeViaAISDK] Failed to add/update action file ${path}:`, error);
+  }
+}
 ```
 
 ### Success Criteria
@@ -582,181 +548,7 @@ planGroup.POST("/add-or-update-action-file", planHandler.AddOrUpdateActionFile)
 
 ---
 
-## Phase 3: Real-Time File Streaming & Error Handling
-
-### Overview
-
-Ensure file changes stream to the UI in real-time during AI SDK execution, and add proper handling for partial failures via a new `partially_applied` status.
-
-### Changes Required
-
-#### 3.1 Verify Centrifugo Events from textEditor Tool
-
-The existing `textEditor` tool already publishes `ArtifactUpdatedEvent` via Go backend (see `pkg/api/handlers/editor.go:203` and `:299`). Verify this works during AI SDK execution.
-
-**No code changes needed** - verify existing infrastructure works.
-
-#### 3.2 Add Progress Indicator During Execution
-
-**File**: `chartsmith-app/components/PlanChatMessage.tsx`
-
-Update the actionFiles display section to handle all execution states:
-
-```tsx
-{(plan.status === 'applying' || plan.status === 'applied' || plan.status === 'partially_applied') && (
-  <div className="mt-4 light:border light:border-gray-200 pt-4 px-3 pb-2 rounded-lg bg-primary/5 dark:bg-dark-surface">
-    <div className="flex items-center justify-between mb-2" ref={actionsRef}>
-      <span className={`text-xs ${theme === "dark" ? "text-gray-400" : "text-gray-500"}`}>
-        {plan.status === 'applying' && (!plan.actionFiles || plan.actionFiles.length === 0)
-          ? "selecting files..."
-          : plan.status === 'applying'
-            ? `Executing... (${plan.actionFiles?.filter(f => f.status === 'created').length || 0}/${plan.actionFiles?.length || 0} files)`
-            : plan.status === 'partially_applied'
-              ? `${plan.actionFiles?.filter(f => f.status === 'created').length || 0}/${plan.actionFiles?.length || 0} files completed (some failed)`
-              : `${plan.actionFiles?.length || 0} file ${(plan.actionFiles?.length || 0) === 1 ? 'change' : 'changes'}`
-        }
-      </span>
-      {/* ... expand/collapse button ... */}
-    </div>
-    {/* ... file list ... */}
-  </div>
-)}
-```
-
-#### 3.3 Add partially_applied Status to Plan Types
-
-**File**: `chartsmith-app/lib/types/workspace.ts` (or equivalent types file)
-
-Add `partially_applied` to the plan status enum:
-
-```typescript
-export type PlanStatus =
-  | 'planning'
-  | 'pending'
-  | 'review'
-  | 'applying'
-  | 'applied'
-  | 'partially_applied'  // NEW
-  | 'ignored';
-```
-
-**File**: `pkg/workspace/types/plan.go`
-
-```go
-const (
-    PlanStatusPlanning        PlanStatus = "planning"
-    PlanStatusPending         PlanStatus = "pending"
-    PlanStatusReview          PlanStatus = "review"
-    PlanStatusApplying        PlanStatus = "applying"
-    PlanStatusApplied         PlanStatus = "applied"
-    PlanStatusPartiallyApplied PlanStatus = "partially_applied" // NEW
-    PlanStatusIgnored         PlanStatus = "ignored"
-)
-```
-
-#### 3.4 Add Retry/Accept Buttons for Partial Success
-
-**File**: `chartsmith-app/components/PlanChatMessage.tsx`
-
-Add action buttons when plan is in `partially_applied` status:
-
-```tsx
-{plan.status === 'partially_applied' && showActions && (
-  <div className="mt-4 border-t border-dark-border/20 pt-4">
-    <div className={`text-xs mb-3 ${theme === "dark" ? "text-yellow-400" : "text-yellow-600"}`}>
-      Some files failed to be created. You can retry the failed files or accept the partial changes.
-    </div>
-    <div className="flex gap-2">
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={handleRetryFailed}
-        className="text-xs"
-      >
-        Retry Failed Files
-      </Button>
-      <Button
-        variant="default"
-        size="sm"
-        onClick={handleAcceptPartial}
-        className="text-xs bg-primary hover:bg-primary/80 text-white"
-      >
-        Accept Partial Changes
-      </Button>
-    </div>
-  </div>
-)}
-```
-
-#### 3.5 Implement Retry and Accept Actions
-
-**File**: `chartsmith-app/lib/workspace/actions/execute-via-ai-sdk.ts`
-
-Add retry function:
-
-```typescript
-export async function retryFailedFiles({
-  session,
-  planId,
-  workspaceId,
-  revisionNumber,
-  planDescription,
-  failedFiles,
-  provider,
-}: RetryFailedFilesParams): Promise<void> {
-  // Similar to executeViaAISDK but only for specific files
-  // Modify the execution instruction to focus on failed files only
-  const retryInstruction = `The following files failed to be created. Please retry creating them:
-
-${failedFiles.map(f => `- ${f.path}`).join('\n')}
-
-Original plan:
-${planDescription}
-
-Create ONLY the files listed above.`;
-
-  // ... rest of execution logic
-}
-```
-
-**File**: `chartsmith-app/lib/workspace/actions/accept-partial.ts` (new file)
-
-```typescript
-"use server";
-
-export async function acceptPartialAction(
-  session: Session,
-  planId: string
-): Promise<void> {
-  // Mark plan as 'applied' even though some files failed
-  // User accepts the partial state
-  const db = getDB(await getParam("DB_URI"));
-  await db.query(
-    `UPDATE workspace_plan SET status = 'applied', updated_at = NOW() WHERE id = $1`,
-    [planId]
-  );
-}
-```
-
-### Success Criteria
-
-#### Automated Verification:
-- [ ] TypeScript compiles: `cd chartsmith-app && npm run build`
-- [ ] Go compiles: `cd chartsmith && go build ./...`
-
-#### Manual Verification:
-- [ ] Files appear in file explorer as they're created
-- [ ] Editor shows diffs as files are modified
-- [ ] Progress indicator shows "Executing... (3/13 files)" during execution
-- [ ] UI shows "selecting files..." initially when file list is empty
-- [ ] UI updates in real-time (no page refresh needed)
-- [ ] When files fail: status shows "partially_applied" with retry/accept options
-- [ ] "Retry Failed Files" re-attempts only failed files
-- [ ] "Accept Partial Changes" marks plan as applied
-
----
-
-## Phase 4: Deprecate Go LLM Calls
+## Phase 3: Deprecate Go LLM Calls
 
 ### Overview
 
@@ -764,7 +556,7 @@ Mark Go LLM functions as deprecated and add documentation. Do NOT remove them ye
 
 ### Changes Required
 
-#### 4.1 Add Deprecation Comments to Go LLM Functions
+#### 3.1 Add Deprecation Comments to Go LLM Functions
 
 **File**: `pkg/llm/execute-plan.go`
 
@@ -779,7 +571,7 @@ func CreateExecutePlan(...) {
 
 Add similar deprecation comments.
 
-#### 4.2 Add Migration Documentation
+#### 3.2 Add Migration Documentation
 
 **File**: `docs/ARCHITECTURE.md` (update existing)
 
@@ -837,7 +629,6 @@ Add section documenting the new AI SDK execution path:
 - End-to-end plan generation → placeholder display
 - End-to-end plan execution via AI SDK with dynamic file list
 - Real-time UI updates during execution
-- Partial failure handling with retry/accept options
 
 ### Manual Testing Steps
 
@@ -851,14 +642,6 @@ Add section documenting the new AI SDK execution path:
 8. Verify 10+ files created (Chart.yaml, values.yaml, templates/*)
 9. Verify files appear in file explorer and editor
 10. Accept changes and verify chart is valid
-
-### Error Handling Testing
-
-1. Simulate a file creation failure (e.g., via network interruption)
-2. Verify plan status changes to "partially_applied"
-3. Verify UI shows which files succeeded/failed
-4. Test "Retry Failed Files" button
-5. Test "Accept Partial Changes" button
 
 ## Performance Considerations
 
@@ -889,13 +672,11 @@ This plan addresses both immediate (duplicate text) and architectural (Go LLM ca
 
 1. **Phase 1**: Fix UI to show placeholder instead of duplicate description
 2. **Phase 2**: Route execution through AI SDK with textEditor tool, building file list dynamically (mimics Go's two-phase approach)
-3. **Phase 3**: Real-time file streaming + `partially_applied` status for error handling with retry/accept options
-4. **Phase 4**: Deprecate (don't remove) Go LLM code
+3. **Phase 3**: Deprecate (don't remove) Go LLM code
 
 The result is a clean architecture where:
 - All LLM calls go through TypeScript AI SDK
 - Go backend is a file system executor only
 - Feature parity with main branch is maintained (same two-phase flow)
 - File list is built dynamically during execution (like Go)
-- Partial failures are handled gracefully with user options
 - Legacy fallback remains available
