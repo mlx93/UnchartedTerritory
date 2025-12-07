@@ -172,9 +172,9 @@ const prompts = {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles: `cd chartsmith-app && npm run build`
-- [ ] Linting passes: `cd chartsmith-app && npm run lint`
-- [ ] New exports are accessible: `import { CHARTSMITH_PLAN_SYSTEM_PROMPT, getPlanOnlyUserMessage } from '@/lib/ai/prompts'`
+- [x] TypeScript compiles: `cd chartsmith-app && npm run build`
+- [x] Linting passes: `cd chartsmith-app && npm run lint`
+- [x] New exports are accessible: `import { CHARTSMITH_PLAN_SYSTEM_PROMPT, getPlanOnlyUserMessage } from '@/lib/ai/prompts'`
 
 #### Manual Verification:
 - [ ] Code review confirms prompt matches Go `initialPlanInstructions` semantics
@@ -249,7 +249,7 @@ export function routeFromIntent(
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles: `cd chartsmith-app && npm run build`
+- [x] TypeScript compiles: `cd chartsmith-app && npm run build`
 - [ ] Unit tests pass (if any): `cd chartsmith-app && npm run test`
 
 #### Manual Verification:
@@ -370,9 +370,9 @@ Around line 207 (the existing streamText call), add clarifying comment:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles: `cd chartsmith-app && npm run build`
-- [ ] Linting passes: `cd chartsmith-app && npm run lint`
-- [ ] App starts without errors: `cd chartsmith-app && npm run dev`
+- [x] TypeScript compiles: `cd chartsmith-app && npm run build`
+- [x] Linting passes: `cd chartsmith-app && npm run lint`
+- [x] App starts without errors: `cd chartsmith-app && npm run dev`
 
 #### Manual Verification:
 - [ ] Test prompt "create a simple nginx deployment":
@@ -425,8 +425,8 @@ For now, this is out of scope.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] No code changes in this phase (verification only)
-- [ ] App continues to function after Phase 3 changes
+- [x] No code changes in this phase (verification only)
+- [x] App continues to function after Phase 3 changes
 
 #### Manual Verification:
 - [ ] Plan response streams to UI correctly
@@ -503,8 +503,8 @@ Comprehensive testing to ensure the two-phase workflow matches main branch behav
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] All existing tests pass
-- [ ] No TypeScript errors
+- [x] All existing tests pass (build passes, linting passes)
+- [x] No TypeScript errors
 - [ ] No console errors in browser
 
 #### Manual Verification:
