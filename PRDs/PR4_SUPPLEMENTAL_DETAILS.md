@@ -283,7 +283,7 @@ const {
 } = useAISDKChatAdapter(/* ... */);
 ```
 
-**Add to Header** (near existing role selector, around line 214):
+**Add to Header** (integration point is line 214, role selector is at lines 216-276):
 ```typescript
 <div className="flex items-center gap-2">
   <LiveProviderSwitcher
@@ -445,31 +445,130 @@ validateChart: createValidateChartTool(authHeader, workspaceId, revisionNumber),
 
 ## Tool Result Rendering
 
-**File**: Update `chartsmith-app/components/ChatMessage.tsx` or `NewChartChatMessage.tsx`
+**IMPORTANT**: The codebase uses **property-based detection** for tool results, NOT tool-result part parsing. This follows the pattern used by `responsePlanId`, `responseRenderId`, and `responseConversionId`.
 
-**Detect Validation Results** (in message part rendering):
+### Step 1: Update Message Interface
+
+**File**: `chartsmith-app/components/types.ts`
+
+Add the new property to the Message interface (around line 35):
 ```typescript
-// Check if message has validation tool result
-const hasValidationResult = message.parts?.some(
-  (part) =>
-    part.type === "tool-result" &&
-    (part as { toolName?: string }).toolName === "validateChart"
-);
-
-// Extract validation result if present
-const validationResult = message.parts?.find(
-  (part) =>
-    part.type === "tool-result" &&
-    (part as { toolName?: string }).toolName === "validateChart"
-) as { result?: { validation: ValidationResult } } | undefined;
+export interface Message {
+  // ... existing properties (id, prompt, response, etc.)
+  responseRenderId?: string;
+  responsePlanId?: string;
+  responseConversionId?: string;
+  responseValidationId?: string;  // NEW: Add this property
+  // ... rest of properties
+}
 ```
 
-**Render Validation Results** (in component JSX):
+### Step 2: Create Validation Atoms
+
+**File**: `chartsmith-app/atoms/validationAtoms.ts` (NEW)
+
 ```typescript
-{validationResult?.result?.validation && (
-  <ValidationResults result={validationResult.result.validation} />
+import { atom } from 'jotai';
+import type { ValidationResult } from '@/lib/ai/tools/validateChart';
+
+export interface ValidationData {
+  id: string;
+  result: ValidationResult;
+  workspaceId: string;
+  timestamp: Date;
+}
+
+// Store all validations
+export const validationsAtom = atom<ValidationData[]>([]);
+
+// Getter atom for fetching by ID
+export const validationByIdAtom = atom((get) => {
+  const validations = get(validationsAtom);
+  return (id: string) => validations.find(v => v.id === id);
+});
+
+// Action atom for adding/updating validations
+export const handleValidationUpdatedAtom = atom(
+  null,
+  (get, set, validation: ValidationData) => {
+    const current = get(validationsAtom);
+    const existing = current.findIndex(v => v.id === validation.id);
+    if (existing >= 0) {
+      const updated = [...current];
+      updated[existing] = validation;
+      set(validationsAtom, updated);
+    } else {
+      set(validationsAtom, [...current, validation]);
+    }
+  }
+);
+```
+
+### Step 3: Update ChatMessage.tsx
+
+**File**: `chartsmith-app/components/ChatMessage.tsx`
+
+Add validation data fetching (after other atom getters, around line 95-101):
+```typescript
+import { validationByIdAtom } from '@/atoms/validationAtoms';
+
+// Inside component, after other atom getters:
+const [validationGetter] = useAtom(validationByIdAtom);
+const validation = message?.responseValidationId
+  ? validationGetter(message.responseValidationId)
+  : undefined;
+```
+
+Add to SortedContent render (after conversion results section, around line 204-217):
+```typescript
+{/* 5. Validation results (if responseValidationId exists) */}
+{message?.responseValidationId && (
+  <div className="mt-4">
+    {(message.response || message.responsePlanId || message.responseRenderId || message.responseConversionId) && (
+      <div className="border-t border-gray-200 dark:border-dark-border/30 pt-4 mb-2">
+        <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">Validation Results:</div>
+      </div>
+    )}
+    {validation ? (
+      <ValidationResults validationId={message.responseValidationId} />
+    ) : (
+      <LoadingSpinner message="Loading validation results..." />
+    )}
+  </div>
 )}
 ```
+
+### Step 4: Update ValidationResults Component Props
+
+**File**: `chartsmith-app/components/chat/ValidationResults.tsx`
+
+The component should receive the validation ID and fetch data from atoms:
+```typescript
+interface ValidationResultsProps {
+  validationId: string;  // Changed from `result: ValidationResult`
+}
+
+export function ValidationResults({ validationId }: ValidationResultsProps) {
+  const [validationGetter] = useAtom(validationByIdAtom);
+  const validationData = validationGetter(validationId);
+
+  if (!validationData) {
+    return <LoadingSpinner message="Loading validation..." />;
+  }
+
+  const result = validationData.result;
+  // ... rest of component using `result`
+}
+```
+
+### Pattern Summary
+
+The rendering flow is:
+1. Tool execute() returns result with a unique validation ID
+2. Result is stored in validationsAtom via handleValidationUpdatedAtom
+3. Message gets `responseValidationId` set to the validation ID
+4. ChatMessage detects `responseValidationId` and renders ValidationResults
+5. ValidationResults fetches full data from validationByIdAtom using the ID
 
 ---
 
@@ -575,18 +674,20 @@ export function ValidationProgress({ stages }: ValidationProgressProps) {
 - `chartsmith-app/components/chat/ValidationResults.tsx`
 - `chartsmith-app/components/chat/LiveProviderSwitcher.tsx`
 - `chartsmith-app/components/chat/ValidationProgress.tsx` (optional)
+- `chartsmith-app/atoms/validationAtoms.ts` - Jotai atoms for validation state
 
 ### Files to Modify
 
 **Go Backend**:
-- `pkg/api/server.go` - Add route registration
+- `pkg/api/server.go` - Add route registration (lines 18-38 is the route block)
 
 **Frontend**:
 - `chartsmith-app/lib/ai/tools/index.ts` - Register validateChart
 - `chartsmith-app/lib/ai/tools/bufferedTools.ts` - Add validateChart
 - `chartsmith-app/hooks/useAISDKChatAdapter.ts` - Add provider state
-- `chartsmith-app/components/ChatContainer.tsx` - Add LiveProviderSwitcher
-- `chartsmith-app/components/ChatMessage.tsx` or `NewChartChatMessage.tsx` - Render results
+- `chartsmith-app/components/ChatContainer.tsx` - Add LiveProviderSwitcher (integration point: line 214)
+- `chartsmith-app/components/ChatMessage.tsx` - Add validation result rendering (SortedContent component)
+- `chartsmith-app/components/types.ts` - Add `responseValidationId` to Message interface
 
 ---
 

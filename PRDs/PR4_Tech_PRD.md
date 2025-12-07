@@ -97,6 +97,41 @@ Implement a Go-based validation pipeline, integrate with existing AI SDK tool in
 6. Tool result rendered in chat via ValidationResults component
 7. AI interprets results and provides natural language explanation
 
+### Intent Classification & Routing (No Changes Required)
+
+**Design Decision**: Validation requests rely on existing intent routing without modifications.
+
+**Why This Works**:
+The Go intent classifier (`pkg/llm/intent.go:41`) defines:
+```
+- isRender: true if the prompt is a request to render or test or validate the chart
+```
+
+When a user says "validate my chart", the classifier may return `isRender: true`. However, the routing logic in `app/api/chat/route.ts:256-260` handles this safely:
+
+```typescript
+case "render":
+  // Note: Render handling would typically trigger render pipeline
+  // For now, let AI SDK acknowledge the render request
+  console.log('[/api/chat] Render intent detected, passing to AI SDK');
+  break;  // Falls through to streamText() with tools
+```
+
+**Key Insight**: The `render` case does `break` (not `return`), so execution continues to `streamText()` where all tools including `validateChart` are available. The AI model sees the tool and can invoke it.
+
+**Routing Outcomes for Validation Phrases**:
+
+| User Says | Intent Result | Route | Tools Available | Works? |
+|-----------|---------------|-------|-----------------|--------|
+| "validate my chart" | `isRender: true` | `render` → falls through | ✅ Yes | ✅ |
+| "check for errors" | `isConversational: true` | `ai-sdk` | ✅ Yes | ✅ |
+| "run helm lint" | `isRender: true` | `render` → falls through | ✅ Yes | ✅ |
+| "any issues?" | `isConversational: true` | `ai-sdk` | ✅ Yes | ✅ |
+
+**No Changes to Intent Classification**: We explicitly chose NOT to add an `isValidate` flag to keep the implementation simple. The existing routing handles all validation scenarios correctly.
+
+**Future Consideration**: If render-specific logic is later added to the `case "render"` branch that returns early, validation routing would need to be revisited.
+
 ---
 
 ## Go Backend Specification
@@ -282,9 +317,17 @@ Write renderedYAML to temp file. Execute `kube-score score <tempfile> --output-f
 
 **Handler Registration** (in `server.go`):
 ```go
-// Add after existing routes (~line 44)
+// Add after existing tool routes (lines 18-23) or at end of routes (after line 38)
+// Route registration block is at lines 18-38, not line 44
 mux.HandleFunc("POST /api/validate", handlers.ValidateChart)
 ```
+
+**Response Helpers** (use unexported functions from `handlers/response.go`):
+- `writeJSON(w, status, data)` - For success responses
+- `writeBadRequest(w, message)` - For validation errors (400)
+- `writeInternalError(w, message)` - For server errors (500)
+
+Note: Exported versions exist in `pkg/api/errors.go` but handlers use the unexported versions from `handlers/response.go`.
 
 **Request Handling**:
 1. Decode request body into ValidationRequest
@@ -315,7 +358,8 @@ mux.HandleFunc("POST /api/validate", handlers.ValidateChart)
 - Lines 273-276: `sendMessage()` with body
 
 **Chat Container** (`chartsmith-app/components/ChatContainer.tsx`):
-- Lines 214-276: Role selector dropdown (persona)
+- Line 214: Container div with `flex gap-2` - integration point for provider switcher
+- Lines 216-276: Role selector dropdown (persona)
 - No provider selector currently
 
 ### Validation Tool Definition
@@ -483,18 +527,120 @@ return {
 
 ### Tool Result Rendering
 
-**File**: `chartsmith-app/lib/chat/messageMapper.ts`
+**IMPORTANT**: The codebase uses **property-based detection** for tool results, NOT tool-result part parsing.
 
-Add detection for validateChart tool results similar to existing patterns.
+**File**: `chartsmith-app/components/types.ts`
 
-**File**: `chartsmith-app/components/ChatMessage.tsx` or `NewChartChatMessage.tsx`
-
-Add conditional rendering for validation results:
+Add new property to Message interface:
 ```typescript
-{hasValidationResult && (
-  <ValidationResults result={validationResult} />
+export interface Message {
+  // ... existing properties
+  responseValidationId?: string;  // NEW: ID for validation results
+}
+```
+
+**File**: `chartsmith-app/atoms/validationAtoms.ts` (NEW)
+
+Create Jotai atoms for validation state:
+```typescript
+import { atom } from 'jotai';
+
+export interface ValidationData {
+  id: string;
+  result: ValidationResult;
+  timestamp: Date;
+}
+
+export const validationsAtom = atom<ValidationData[]>([]);
+
+export const validationByIdAtom = atom((get) => {
+  const validations = get(validationsAtom);
+  return (id: string) => validations.find(v => v.id === id);
+});
+```
+
+**File**: `chartsmith-app/components/ChatMessage.tsx`
+
+Add to SortedContent component (after conversion results, around line 204):
+```typescript
+// Validation atom getter
+const [validationGetter] = useAtom(validationByIdAtom);
+const validation = message?.responseValidationId
+  ? validationGetter(message.responseValidationId)
+  : undefined;
+
+// In render, after conversion results:
+{message?.responseValidationId && (
+  <div className="mt-4">
+    {(message.response || message.responsePlanId || message.responseRenderId || message.responseConversionId) && (
+      <div className="border-t border-gray-200 dark:border-dark-border/30 pt-4 mb-2">
+        <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">Validation Results:</div>
+      </div>
+    )}
+    {validation ? (
+      <ValidationResults validationId={message.responseValidationId} />
+    ) : (
+      <LoadingSpinner message="Loading validation results..." />
+    )}
+  </div>
 )}
 ```
+
+**Pattern Note**: This follows the same pattern as `responsePlanId`, `responseRenderId`, and `responseConversionId`. The AI SDK tool result will set `responseValidationId` on the message, and the component fetches data via Jotai atom getter.
+
+### Message Refetch After Streaming (PR3.4 Fix)
+
+**Problem**: When `onFinish` creates a plan or sets `responseValidationId` on the message in the database, the frontend Jotai atom doesn't get updated because:
+1. AI SDK streaming completes and updates the message atom
+2. `onFinish` runs async, updates the DB with `responsePlanId`/`responseValidationId`
+3. Nothing notifies the frontend of this DB update
+
+**Solution**: Poll/refetch the message after streaming completes to pick up async-set properties.
+
+**File**: `chartsmith-app/hooks/useAISDKChatAdapter.ts`
+
+Add refetch logic after streaming completes:
+```typescript
+// Import the refetch action
+import { getChatMessageAction } from '@/lib/workspace/actions/chat';
+
+// In the hook, add refetch helper
+const refetchMessageForAsyncProperties = useCallback(async (messageId: string) => {
+  // Small delay for onFinish async work to complete (plan creation, etc.)
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  try {
+    const freshMessage = await getChatMessageAction(session, messageId);
+    if (freshMessage && (freshMessage.responsePlanId || freshMessage.responseValidationId)) {
+      // Update the message in atoms with the new properties
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, ...freshMessage } : m
+      ));
+    }
+  } catch (err) {
+    console.error('[useAISDKChatAdapter] Failed to refetch message:', err);
+  }
+}, [session, setMessages]);
+
+// Call after streaming completes (in onFinish or status change handler)
+// When status changes from 'streaming' to 'ready' and we have a chatMessageId:
+useEffect(() => {
+  if (status === 'ready' && lastMessageId.current) {
+    refetchMessageForAsyncProperties(lastMessageId.current);
+  }
+}, [status, refetchMessageForAsyncProperties]);
+```
+
+**Timing Considerations**:
+- 500ms delay is typically sufficient for `createPlanFromToolCalls` DB write
+- If `onFinish` takes longer (complex validation), increase to 1000ms
+- This is a tactical fix; proper solution would be Centrifugo events for plan/validation creation
+
+**Why This Works**:
+- Bypasses Centrifugo timing issues entirely
+- DB is source of truth, we just read it
+- Same pattern works for `responsePlanId`, `responseValidationId`, and future async properties
+- User sees text response immediately, then buttons/results appear ~500ms later
 
 ---
 
