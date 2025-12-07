@@ -19,12 +19,40 @@
 | PR1.7 Prereq Fixes | ✅ **Complete** | Bug fixes before PR1.7 |
 | PR1.7 Implementation | ✅ **Complete** | Deeper system integration |
 | PR2.0 Implementation | ✅ **Complete** | AI SDK reintegration into main path |
+| PR3.0 Implementation | ✅ **Complete** | Full feature parity (plan workflow, intent, rollback, conversion) |
+| PR3.1 Implementation | ✅ **Complete** | AI SDK UX improvements and buffered tool calls fix |
+| PR3.2 Implementation | ✅ **Complete** | Two-phase plan/execute workflow parity |
+| PR3.3 Implementation | ✅ **Complete** | AI SDK execution path for text-only plans |
 | PR2 Implementation | 🔲 Ready to Start | Validation agent |
-| PR3.0 Parity Plan | ✅ Ready | Plan workflow parity (Option A) |
 
 ---
 
 ## What Already Works
+
+### PR3.0-3.3 Deliverables (All Working ✅)
+
+- [x] `lib/ai/intent.ts` - Intent classification client
+- [x] `lib/ai/plan.ts` - Plan creation client
+- [x] `lib/ai/conversion.ts` - K8s conversion client
+- [x] `lib/ai/tools/toolInterceptor.ts` - Tool call buffering during streaming
+- [x] `lib/ai/tools/bufferedTools.ts` - Buffered tool wrappers
+- [x] `lib/ai/tools/convertK8s.ts` - K8s conversion tool
+- [x] `lib/workspace/actions/proceed-plan.ts` - Proceed/ignore plan actions
+- [x] `lib/workspace/actions/execute-via-ai-sdk.ts` - AI SDK execution for text-only plans
+- [x] `pkg/api/handlers/intent.go` - Intent classification endpoint
+- [x] `pkg/api/handlers/plan.go` - Plan creation endpoint (create-from-tools)
+- [x] `pkg/api/handlers/conversion.go` - K8s conversion endpoint
+- [x] Page reload guard in WorkspaceContent (warns before leaving with unsaved changes)
+- [x] Rule-based followup action generation ("Render the chart" after file operations)
+- [x] Rollback field population on commit (first message of revision)
+- [x] Buffered tool calls persisted to `workspace_plan.buffered_tool_calls` JSONB
+- [x] Two-phase plan/execute workflow (plan generation → execution)
+- [x] Centered chat layout until plan execution
+- [x] LLM-based file extraction from plan descriptions
+- [x] Dynamic action file list building during execution
+- [x] Execution prompt refinements for better tool call generation
+- [x] All 116 TypeScript tests passing
+- [x] Go builds passing
 
 ### PR2.0 Deliverables (All Working ✅)
 
@@ -42,10 +70,14 @@
 
 ### PR1.7 Deliverables (All Working ✅)
 
-- [x] Centrifugo integration for real-time file updates
-- [x] Pending changes UI indicators (yellow dots)
+- [x] Centrifugo integration for real-time file updates (`artifact-updated` events from Go)
+- [x] Pending changes UI indicators (yellow dots in explorer, pending count in tab bar)
+- [x] Diff stats showing additions/deletions
 - [x] Commit/Discard functionality for revision management
+- [x] `AddFileToChartPending()` function (writes to `content_pending` for consistency)
+- [x] `GetFileIDByPath()` helper for Centrifugo event publishing
 - [x] Files properly display in Explorer for revision 0
+- [x] Prerequisite bug fixes (double processing, inconsistent content handling)
 
 ### PR1.65 Deliverables (All Working ✅)
 
@@ -120,19 +152,35 @@
 | Remove `components/chat/AIMessageList.tsx` | 🔲 | Should |
 | Remove feature flag (make AI SDK only path) | 🔲 | Should |
 
-### PR3 Parity (Option A) - Upcoming Work
+### PR3 Parity (Option A) - ✅ Complete
 | Task | Status | Priority |
 |------|--------|----------|
-| DB migration: add `workspace_plan.buffered_tool_calls` JSONB + index | 🔲 | Must |
-| Phase 1: Page reload guard + rule-based followups | 🔲 | Must |
-| Phase 2: Intent classify endpoint + rollback field population | 🔲 | Must |
-| Phase 3: Plan workflow (buffer tools, create plan, proceed/ignore) | 🔲 | Must |
-| Phase 4: K8s conversion bridge tool + endpoint | 🔲 | Should |
+| DB migration: add `workspace_plan.buffered_tool_calls` JSONB + index | ✅ | Complete |
+| Phase 1: Page reload guard + rule-based followups | ✅ | Complete |
+| Phase 2: Intent classify endpoint + rollback field population | ✅ | Complete |
+| Phase 3: Plan workflow (buffer tools, create plan, proceed/ignore) | ✅ | Complete |
+| Phase 4: K8s conversion bridge tool + endpoint | ✅ | Complete |
 | Parity stance: Option A (same UI/flow, AI prose may differ) | ✅ | Decision |
+| PR3.3: AI SDK execution path for text-only plans | ✅ | Complete |
 
 ---
 
 ## Success Criteria Checklist
+
+### PR3.0-3.3 ✅ Complete
+- [x] Plan workflow: buffer textEditor tool calls → create plan → Proceed/Ignore buttons
+- [x] Proceed executes buffered tool calls via Go endpoints
+- [x] Ignore marks plan as ignored
+- [x] Intent classification gates off-topic/proceed/render intents
+- [x] Page reload guard warns before leaving with unsaved changes
+- [x] Followup actions auto-generated after file operations
+- [x] Rollback link appears on first message after commit
+- [x] K8s conversion tool and endpoint working
+- [x] Text-only plans execute via AI SDK with dynamic file list
+- [x] LLM extracts expected files from plan descriptions
+- [x] Execution prompts refined for better tool call generation
+- [x] All 116 TypeScript tests passing
+- [x] Go builds passing
 
 ### PR2.0 ✅ Complete
 - [x] Feature flag toggles legacy vs AI SDK path
@@ -147,9 +195,11 @@
 - [x] No regressions in legacy path
 
 ### PR1.7 ✅ Complete
-- [x] Centrifugo integration for real-time updates
-- [x] Pending changes UI indicators
-- [x] Commit/Discard functionality
+- [x] Centrifugo integration for real-time updates (`artifact-updated` events)
+- [x] Pending changes UI indicators (yellow dots, pending count, diff stats)
+- [x] Commit/Discard functionality (`commit-pending-changes.ts`, `discard-pending-changes.ts`)
+- [x] `AddFileToChartPending()` function for consistent content handling
+- [x] Prerequisite bug fixes (double processing, inconsistent content)
 
 ### PR1-PR1.65 ✅ Complete
 - [x] All previous PR deliverables working
@@ -193,9 +243,17 @@
 
 | Document | Status | Location |
 |----------|--------|----------|
+| PR3.0 Completion Report | ✅ Complete | `docs/PR3.0_COMPLETION_REPORT_FINAL.md` |
+| PR3.0 Architecture Diagram | ✅ Complete | `docs/PR3.0_ARCHITECTURE_DIAGRAM.md` |
+| PR3.0 Plan Integration Flow | ✅ Complete | `docs/PR3.0_AI_SDK_PLAN_INTEGRATION_FLOW.md` |
+| PR3.1 UX Improvements | ✅ Complete | `docs/PR3.1_AI_SDK_UX_IMPROVEMENTS.md` |
+| PR3.0 Implementation Plan | ✅ Complete | `PRDs/PR3.0_FEATURE_PARITY_IMPLEMENTATION_PLAN.md` |
 | PR2.0 Completion Report | ✅ Complete | `docs/PR2.0_COMPLETION_REPORT.md` |
 | PR2.0 Tech PRD | ✅ Complete | `PRDs/PR2.0_REINTEGRATION_Tech_PRD.md` |
 | PR2.0 Implementation Plan | ✅ Complete | `PRDs/PR2.0_REINTEGRATION_IMPLEMENTATION_PLAN.md` |
+| PR1.7 Implementation Plan | ✅ Complete | `PRDs/PR1.7_IMPLEMENTATION_PLAN.md` |
+| PR1.7 Product PRD | ✅ Complete | `PRDs/PR1.7_Product_PRD.md` |
+| PR1.7 Tech PRD | ✅ Complete | `PRDs/PR1.7_Tech_PRD.md` |
 | PR1.6 Completion Report | ✅ Complete | `docs/PR1.6_COMPLETION_REPORT.md` |
 | PR1.5 Completion Report | ✅ Complete | `docs/PR1.5_COMPLETION_REPORT.md` |
 | PR1 Completion Report | ✅ Complete | `docs/PR1_COMPLETION_REPORT.md` |
@@ -221,10 +279,10 @@ Tests:       22 passed, 22 total
 Time:        0.505 s
 ```
 
-### Unit Tests (Combined)
+### Unit Tests (Combined - PR3.0)
 ```
-Test Suites: 8 passed, 8 total
-Tests:       94 passed, 94 total
+Test Suites: 9 passed, 9 total
+Tests:       116 passed, 116 total
 ```
 
 ### Build Status
@@ -250,8 +308,11 @@ Tests:       94 passed, 94 total
 | Dec 5, 2025 | PR1.7 prereq fixes complete |
 | Dec 5, 2025 | PR1.7 complete, Centrifugo + Commit/Discard working |
 | Dec 5, 2025 | **PR2.0 complete**, AI SDK reintegrated into main workspace path |
-| Dec 6, 2025 | PR3.0 parity plan finalized (Option A, buffered plan workflow) |
+| Dec 6, 2025 | **PR3.0 complete**, full feature parity implementation (plan workflow, intent, rollback, conversion) |
+| Dec 6, 2025 | **PR3.1 complete**, AI SDK UX improvements and buffered tool calls fix |
+| Dec 6, 2025 | **PR3.2 complete**, two-phase plan/execute workflow parity |
+| Dec 6, 2025 | **PR3.3 complete**, AI SDK execution path for text-only plans |
 
 ---
 
-*Update this document as tasks are completed. Last updated: Dec 6, 2025 (PR3.0 plan ready)*
+*Update this document as tasks are completed. Last updated: Dec 6, 2025 (PR3.0-3.3 complete)*

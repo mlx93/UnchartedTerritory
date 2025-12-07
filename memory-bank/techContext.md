@@ -214,7 +214,7 @@ VOYAGE_API_KEY=xxx     # Used by Go for embeddings
 
 ---
 
-## Project Structure (After PR1.5)
+## Project Structure (After PR3.0-3.3)
 
 ```
 chartsmith/
@@ -237,17 +237,23 @@ chartsmith/
 │   │   │   ├── models.ts     # PR1
 │   │   │   ├── provider.ts   # PR1
 │   │   │   ├── llmClient.ts  # PR1.5 ✅
-│   │   │   ├── prompts.ts    # PR1.5 ✅
-│   │   │   ├── __tests__/
-│   │   │   │   └── integration/
-│   │   │   │       └── tools.test.ts  # PR1.5 ✅
-│   │   │   └── tools/        # PR1.5 ✅
-│   │   │       ├── utils.ts
-│   │   │       ├── index.ts
-│   │   │       ├── getChartContext.ts
-│   │   │       ├── textEditor.ts
-│   │   │       ├── latestSubchartVersion.ts
-│   │   │       └── latestKubernetesVersion.ts
+│   │   ├── prompts.ts    # PR1.5 ✅
+│   │   ├── intent.ts     # Intent classification ✅ (PR3.0)
+│   │   ├── plan.ts        # Plan creation ✅ (PR3.0)
+│   │   ├── conversion.ts  # K8s conversion ✅ (PR3.0)
+│   │   ├── __tests__/
+│   │   │   └── integration/
+│   │   │       └── tools.test.ts  # PR1.5 ✅
+│   │   └── tools/        # PR1.5 + PR3.0 ✅
+│   │       ├── utils.ts
+│   │       ├── index.ts
+│   │       ├── getChartContext.ts
+│   │       ├── textEditor.ts
+│   │       ├── latestSubchartVersion.ts
+│   │       ├── latestKubernetesVersion.ts
+│   │       ├── convertK8s.ts        # PR3.0 ✅
+│   │       ├── toolInterceptor.ts    # PR3.0 ✅
+│   │       └── bufferedTools.ts     # PR3.0 ✅
 │   │   └── llm/              # Empty (prompt-type.ts deleted)
 │   └── tests/                # Playwright E2E
 │
@@ -256,14 +262,17 @@ chartsmith/
 │   └── main.go
 │
 ├── pkg/                      # Go packages
-│   ├── api/                  # PR1.5 ✅ - NEW HTTP handlers
+│   ├── api/                  # PR1.5 + PR3.0 ✅ - HTTP handlers
 │   │   ├── server.go
 │   │   ├── errors.go
 │   │   └── handlers/
 │   │       ├── response.go
 │   │       ├── context.go
 │   │       ├── editor.go
-│   │       └── versions.go
+│   │       ├── versions.go
+│   │       ├── intent.go      # PR3.0 ✅
+│   │       ├── plan.go         # PR3.0 ✅
+│   │       └── conversion.go   # PR3.0 ✅
 │   ├── llm/                  # Existing - Groq integration
 │   ├── listener/             # PostgreSQL queue handlers
 │   ├── realtime/             # Centrifugo integration
@@ -287,12 +296,17 @@ chartsmith/
 ### Routes
 
 ```
-GET   /health                       → Health check
-POST  /api/tools/context            → handlers.GetChartContext ✅
-POST  /api/tools/editor             → handlers.TextEditor ✅
-POST  /api/tools/versions/subchart  → handlers.GetSubchartVersion ✅
-POST  /api/tools/versions/kubernetes→ handlers.GetKubernetesVersion ✅
-POST  /api/validate                 → handlers.Validate (PR2)
+GET   /health                                    → Health check
+POST  /api/tools/context                         → handlers.GetChartContext ✅
+POST  /api/tools/editor                          → handlers.TextEditor ✅
+POST  /api/tools/versions/subchart               → handlers.GetSubchartVersion ✅
+POST  /api/tools/versions/kubernetes             → handlers.GetKubernetesVersion ✅
+POST  /api/intent/classify                       → handlers.ClassifyIntent ✅ (PR3.0)
+POST  /api/plan/create-from-tools                → handlers.CreatePlanFromToolCalls ✅ (PR3.0)
+POST  /api/plan/publish-update                   → handlers.PublishPlanUpdate ✅ (PR3.0)
+POST  /api/plan/update-action-file-status        → handlers.UpdateActionFileStatus ✅ (PR3.2)
+POST  /api/conversion/start                      → handlers.StartConversion ✅ (PR3.0)
+POST  /api/validate                              → handlers.Validate (PR2)
 ```
 
 ---
@@ -317,7 +331,8 @@ POST  /api/validate                 → handlers.Validate (PR2)
 lib/ai/__tests__/provider.test.ts              # PR1 - Provider factory
 lib/ai/__tests__/config.test.ts                # PR1 - Config
 lib/ai/__tests__/integration/tools.test.ts     # PR1.5 ✅ - 22 integration tests
-app/api/chat/__tests__/route.test.ts           # PR1 - API route
+lib/chat/__tests__/messageMapper.test.ts       # PR2.0 ✅ - 33 unit tests
+app/api/chat/__tests__/route.test.ts          # PR1 - API route
 lib/__tests__/ai-mock-utils.ts                 # Existing - AI SDK mocks
 ```
 
@@ -378,4 +393,4 @@ pkg/llm/string_replacement_test.go        # String replacement
 
 ---
 
-*This document captures the technical environment for the Chartsmith migration. Last updated: Dec 4, 2025 (PR1.5 complete)*
+*This document captures the technical environment for the Chartsmith migration. Last updated: Dec 6, 2025 (PR3.0-3.3 complete)*

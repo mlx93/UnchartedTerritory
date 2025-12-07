@@ -19,10 +19,14 @@
 | 9 | Provider Priority | Direct APIs first (Anthropic → OpenAI → OpenRouter) |
 | 10 | Default Model | Claude Sonnet 4 (`anthropic/claude-sonnet-4-20250514`) |
 | 11 | All Tools Call Go | Consistent architecture, avoids bundling issues |
+| 12 | Plan Workflow Parity | Option A: Same UI/flow, AI prose may differ (PR3.0) |
+| 13 | Plan Execution Paths | Two paths: buffered tool calls (PR3.0) vs text-only (PR3.3) |
+| 14 | Intent Classification | AI SDK primary, Go gates off-topic/proceed/render (PR3.0) |
+| 15 | Tool Call Buffering | In-memory during stream, persisted to DB at plan creation (PR3.0) |
 
 ---
 
-## Current Architecture (After PR1.5 ✅)
+## Current Architecture (After PR3.0-3.3 ✅)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -54,17 +58,28 @@
 │  lib/ai/config.ts       - System prompt, config                  │
 │  lib/ai/llmClient.ts    - Shared client utilities ✅             │
 │  lib/ai/prompts.ts      - System prompts ✅                      │
+│  lib/ai/intent.ts       - Intent classification client ✅ (PR3.0)│
+│  lib/ai/plan.ts         - Plan creation client ✅ (PR3.0)        │
+│  lib/ai/conversion.ts   - K8s conversion client ✅ (PR3.0)      │
 │                                                                  │
-│  Tools (4 total - ALL call Go HTTP):                             │
+│  Tools (6 total - ALL call Go HTTP):                             │
 │  ┌─────────────────────────────────────────────────────────────┐│
 │  │ getChartContext         → POST /api/tools/context            ││
 │  │ textEditor              → POST /api/tools/editor             ││
 │  │ latestSubchartVersion   → POST /api/tools/versions/subchart  ││
 │  │ latestKubernetesVersion → POST /api/tools/versions/kubernetes││
+│  │ convertK8s              → POST /api/conversion/start (PR3.0)  ││
+│  │ validateChart           → POST /api/validate (PR2)           ││
 │  └─────────────────────────────────────────────────────────────┘│
 │                                                                  │
-│  PR2 Addition:                                                   │
-│  - validateChart           → POST /api/validate                  │
+│  PR3.0 Additions:                                                │
+│  - Intent classification   → POST /api/intent/classify           │
+│  - Plan creation           → POST /api/plan/create-from-tools     │
+│  - Plan updates            → POST /api/plan/publish-update      │
+│  - Action file status      → POST /api/plan/update-action-file-status│
+│  - Tool call buffering     → In-memory → DB (buffered_tool_calls)│
+│  - Execute via AI SDK      → execute-via-ai-sdk.ts (text-only)  │
+│  - Buffered tools          → toolInterceptor.ts, bufferedTools.ts│
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼ HTTP (JSON, non-streaming)
@@ -78,6 +93,9 @@
 │  pkg/api/handlers/context.go    - Chart context ✅               │
 │  pkg/api/handlers/editor.go     - File operations ✅             │
 │  pkg/api/handlers/versions.go   - Version lookups ✅             │
+│  pkg/api/handlers/intent.go     - Intent classification ✅ (PR3.0)│
+│  pkg/api/handlers/plan.go       - Plan creation, updates ✅ (PR3.0)│
+│  pkg/api/handlers/conversion.go - K8s conversion ✅ (PR3.0)      │
 │  pkg/validation/*               - Validation pipeline (PR2)      │
 │                                                                  │
 │  EXISTING (preserved):                                           │
@@ -281,7 +299,7 @@ if err := listener.StartListeners(ctx); err != nil {
 
 ---
 
-## File Structure (After PR1.5)
+## File Structure (After PR3.0-3.3)
 
 ### TypeScript AI Module
 
@@ -295,18 +313,24 @@ chartsmith-app/
         ├── index.ts              # Exports (PR1)
         ├── llmClient.ts          # Shared client (PR1.5) ✅
         ├── prompts.ts            # System prompts (PR1.5) ✅
+        ├── intent.ts             # Intent classification client ✅ (PR3.0)
+        ├── plan.ts               # Plan creation client ✅ (PR3.0)
+        ├── conversion.ts         # K8s conversion client ✅ (PR3.0)
         ├── __tests__/
         │   ├── provider.test.ts
         │   ├── config.test.ts
         │   └── integration/
         │       └── tools.test.ts # Integration tests (PR1.5) ✅
-        └── tools/                # PR1.5 ✅
+        └── tools/                # PR1.5 + PR3.0 ✅
             ├── utils.ts          # callGoEndpoint helper
             ├── index.ts          # Tool factory
             ├── getChartContext.ts
             ├── textEditor.ts
             ├── latestSubchartVersion.ts
             ├── latestKubernetesVersion.ts
+            ├── convertK8s.ts     # K8s conversion tool ✅ (PR3.0)
+            ├── toolInterceptor.ts # Tool call buffering ✅ (PR3.0)
+            ├── bufferedTools.ts  # Buffered tool wrappers ✅ (PR3.0)
             └── validateChart.ts  # PR2
 ```
 
@@ -322,7 +346,10 @@ pkg/
         ├── context.go            # getChartContext endpoint ✅
         ├── editor.go             # textEditor endpoint ✅
         ├── versions.go           # Version endpoints ✅
-        └── validate.go           # PR2
+        ├── intent.go             # Intent classification ✅ (PR3.0)
+        ├── plan.go               # Plan creation, updates ✅ (PR3.0)
+        ├── conversion.go        # K8s conversion ✅ (PR3.0)
+        └── validate.go          # PR2
 
 pkg/
 └── validation/                   # PR2
@@ -375,4 +402,81 @@ pkg/
 
 ---
 
-*This document captures the technical patterns and architecture for the migration. Last updated: Dec 4, 2025 (PR1.5 complete)*
+## Plan Workflow Architecture (PR3.0-3.3 ✅)
+
+### Two-Phase Plan/Execute Workflow
+
+**Phase 1: Plan Generation** (No tools enabled)
+- User request → AI SDK with plan prompt
+- AI generates plan description text
+- Tool calls intercepted and buffered in memory
+- Plan created via `/api/plan/create-from-tools` with buffered tool calls
+- `PlanChatMessage` renders with Proceed/Ignore buttons
+
+**Phase 2: Plan Execution** (Two paths)
+
+**Path A: Buffered Tool Calls** (PR3.0)
+- Proceed → `proceedPlanAction` → Execute buffered tool calls directly
+- Tool calls stored in `workspace_plan.buffered_tool_calls` JSONB
+- Fast execution, no LLM calls needed
+
+**Path B: Text-Only Plans** (PR3.3)
+- Proceed → `executeViaAISDK` → LLM extracts files from description
+- AI SDK execution with `textEditor` tool enabled
+- Dynamic action file list building (mirrors Go behavior)
+- File list streams in as tools are called
+
+### Tool Call Buffering Pattern (PR3.0)
+
+```typescript
+// lib/ai/tools/toolInterceptor.ts
+const bufferedCalls: BufferedToolCall[] = [];
+
+// During streaming, intercept tool calls
+const bufferedTools = createBufferedTools(tools, (call) => {
+  bufferedCalls.push(call);
+});
+
+// On finish, create plan with buffered calls
+await createPlanFromTools({
+  workspaceId,
+  bufferedToolCalls: bufferedCalls,
+  // ...
+});
+```
+
+### Intent Classification Pattern (PR3.0)
+
+```typescript
+// lib/ai/intent.ts
+const intent = await classifyIntent({
+  message: userMessage,
+  workspaceId,
+  revisionNumber,
+});
+
+// Route based on intent
+if (intent === 'OFF_TOPIC') {
+  return OFF_TOPIC_DECLINE_MESSAGE;
+}
+if (intent === 'PROCEED' || intent === 'RENDER') {
+  // Handle proceed/render logic
+}
+// Otherwise, pass to AI SDK
+```
+
+---
+
+## Feature Flag Status (PR2.0)
+
+**Current State**: Feature flag `NEXT_PUBLIC_USE_AI_SDK_CHAT` controls which chat path is used:
+- `true`: AI SDK path (via `/api/chat` route, adapter pattern)
+- `false`: Legacy Go worker path (PostgreSQL queue → Go worker → Centrifugo)
+
+**Default**: Currently `false` (legacy path) for safe rollout. Can be toggled per environment.
+
+**Future**: After stable period, feature flag will be removed and AI SDK will become the only path.
+
+---
+
+*This document captures the technical patterns and architecture for the migration. Last updated: Dec 6, 2025 (PR3.0-3.3 complete)*
