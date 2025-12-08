@@ -10,6 +10,8 @@
 
 > *A clear mission statement defining what problem you're solving and why it matters. This keeps exploration focused and prevents scope creep.*
 
+**Challenge Alignment:** Brownfield proof via the Chartsmith fork, working in new territory across Go backend + Next.js/TypeScript frontend, delivering non-trivial complexity (plan workflow interception/buffering and the validation agent pipeline), and producing the required Uncharted outputs (comprehensive docs, tests, and demo coverage).
+
 ### The Problem
 
 Chartsmith, an AI-powered Helm chart creation tool by Replicated, uses a custom **@anthropic-ai/sdk** integration with manual streaming implementation, tight provider coupling, and significant maintenance overhead. The architecture requires:

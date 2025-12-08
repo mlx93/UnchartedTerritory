@@ -194,6 +194,8 @@ curl http://localhost:3000         # Next.js frontend
 **What to Say:**
 > "That's Chartsmith with Vercel AI SDK. We've migrated from a custom Anthropic implementation to a modern, multi-provider architecture—while preserving all 27+ existing UI features.
 >
+> Beyond the migration, we added new capabilities: a **chart validation agent** that runs Helm lint, template validation, and kube-score—then has the AI interpret issues and suggest fixes. And **live provider switching**, so you can change models mid-conversation without losing context.
+>
 > AI tools significantly accelerated this project. I used CodeLayer—a Claude Code harness—for deep codebase research and architectural planning. Cursor handled the implementation, letting me iterate quickly on the adapter pattern and tool integrations.
 >
 > The biggest learning? You don't have to rewrite everything. The adapter pattern let me swap the transport layer without touching the UI—reducing what could have been 150+ hours of work to about 40 hours.
